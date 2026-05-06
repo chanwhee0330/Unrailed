@@ -9,7 +9,7 @@ LPCTSTR lpszWindowName = L"Unrailed";
 
 LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
 
-int winx = 817, winy = 860;
+int winx = 900, winy = 600;
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
 {

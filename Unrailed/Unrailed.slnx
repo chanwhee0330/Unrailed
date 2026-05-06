@@ -3,5 +3,5 @@
     <Platform Name="x64" />
     <Platform Name="x86" />
   </Configurations>
-  <Project Path="Unrailed/Unrailed.vcxproj" />
+  <Project Path="Unrailed/Unrailed.vcxproj" Id="5e1121f5-ed01-4508-81da-f9b926a6fa73" />
 </Solution>

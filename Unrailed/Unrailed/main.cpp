@@ -3,11 +3,6 @@
 
 Game* g_pGame = nullptr;
 
-<<<<<<< Updated upstream
-LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
-
-int winx = 900, winy = 600;
-=======
 LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
     switch (message)
@@ -19,14 +14,13 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     }
     return 0;
 }
->>>>>>> Stashed changes
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
 {
     WNDCLASSEX wcex = {};
-    wcex.cbSize        = sizeof(WNDCLASSEX);
-    wcex.lpfnWndProc   = WndProc;
-    wcex.hInstance     = hInstance;
+    wcex.cbSize = sizeof(WNDCLASSEX);
+    wcex.lpfnWndProc = WndProc;
+    wcex.hInstance = hInstance;
     wcex.lpszClassName = L"UnrailedClass";
     RegisterClassEx(&wcex);
 

@@ -1,68 +1,58 @@
-#include <windows.h> 
-#include <tchar.h> 
-#include <time.h> 
-#include <stdbool.h> 
+#include <windows.h>
+#include "Game.h"
 
-HINSTANCE g_hInst;
-LPCTSTR lpszClass = L"WindowClass";
-LPCTSTR lpszWindowName = L"Unrailed";
+Game* g_pGame = nullptr;
 
+<<<<<<< Updated upstream
 LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
 
 int winx = 900, winy = 600;
+=======
+LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+    switch (message)
+    {
+    case WM_KEYDOWN: if (g_pGame) g_pGame->OnKeyDown(wParam); break;
+    case WM_KEYUP:   if (g_pGame) g_pGame->OnKeyUp(wParam);   break;
+    case WM_DESTROY: PostQuitMessage(0); break;
+    default: return DefWindowProc(hWnd, message, wParam, lParam);
+    }
+    return 0;
+}
+>>>>>>> Stashed changes
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
 {
-	HWND hWnd;
-	MSG Message;
-	WNDCLASSEX WndClass;
+    WNDCLASSEX wcex = {};
+    wcex.cbSize        = sizeof(WNDCLASSEX);
+    wcex.lpfnWndProc   = WndProc;
+    wcex.hInstance     = hInstance;
+    wcex.lpszClassName = L"UnrailedClass";
+    RegisterClassEx(&wcex);
 
-	g_hInst = hInstance;
-	srand(unsigned int(time(NULL)));
+    HWND hWnd = CreateWindow(L"UnrailedClass", L"Unrailed",
+        WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, 0, 1920, 1080,
+        nullptr, nullptr, hInstance, nullptr);
+    ShowWindow(hWnd, nCmdShow);
 
-	WndClass.cbSize = sizeof(WndClass);
-	WndClass.style = CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS;
-	WndClass.lpfnWndProc = WndProc;
-	WndClass.cbClsExtra = 0;
-	WndClass.cbWndExtra = 0;
-	WndClass.hInstance = hInstance;
-	WndClass.hIcon = LoadIcon(NULL, IDI_APPLICATION);
-	WndClass.hCursor = LoadCursor(NULL, IDC_ARROW);
-	WndClass.hbrBackground = (HBRUSH)GetStockObject(WHITE_BRUSH);
-	WndClass.lpszMenuName = NULL;
-	WndClass.lpszClassName = lpszClass;
-	WndClass.hIconSm = LoadIcon(NULL, IDI_APPLICATION);
+    g_pGame = new Game(hWnd);
+    g_pGame->Init();
 
-	RegisterClassEx(&WndClass);
+    MSG msg = {};
+    while (msg.message != WM_QUIT)
+    {
+        if (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE))
+        {
+            TranslateMessage(&msg);
+            DispatchMessage(&msg);
+        }
+        else
+        {
+            g_pGame->Update();
+            g_pGame->Render();
+        }
+    }
 
-	hWnd = CreateWindow(
-		lpszClass,
-		lpszWindowName,
-		WS_OVERLAPPEDWINDOW,
-		0, 0, winx, winy,
-		NULL, NULL,
-		hInstance,
-		NULL
-	);
-
-	ShowWindow(hWnd, nCmdShow);
-	UpdateWindow(hWnd);
-
-	while (GetMessage(&Message, 0, 0, 0))
-	{
-		TranslateMessage(&Message);
-		DispatchMessage(&Message);
-	}
-
-	return (int)Message.wParam;
-}
-
-LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
-{
-	switch (iMessage)
-	{
-	case WM_DESTROY:
-		PostQuitMessage(0);
-	}
-	return DefWindowProc(hWnd, iMessage, wParam, lParam);
+    delete g_pGame;
+    return (int)msg.wParam;
 }

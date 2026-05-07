@@ -127,7 +127,30 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="Bomb.cpp" />
+    <ClCompile Include="Camera.cpp" />
+    <ClCompile Include="Game.cpp" />
+    <ClCompile Include="GameManager.cpp" />
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="Map.cpp" />
+    <ClCompile Include="Obstacle.cpp" />
+    <ClCompile Include="Player.cpp" />
+    <ClCompile Include="Rail.cpp" />
+    <ClCompile Include="Resource.cpp" />
+    <ClCompile Include="Train.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="Bomb.h" />
+    <ClInclude Include="Camera.h" />
+    <ClInclude Include="Defines.h" />
+    <ClInclude Include="Game.h" />
+    <ClInclude Include="GameManager.h" />
+    <ClInclude Include="Map.h" />
+    <ClInclude Include="Obstacle.h" />
+    <ClInclude Include="Player.h" />
+    <ClInclude Include="Rail.h" />
+    <ClInclude Include="Resource.h" />
+    <ClInclude Include="Train.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

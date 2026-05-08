@@ -67,23 +67,46 @@ void Game::Update()
 
 void Game::Render()
 {
-    // 플레이어1 화면 (상단)
-    m_pMap->Render(m_hDC, m_pCamera1, 0);
-    m_pResource->Render(m_hDC, m_pCamera1, 0);
-    m_pObstacle->Render(m_hDC, m_pCamera1, 0);
-    m_pRail->Render(m_hDC, m_pCamera1, 0);
-    m_pPlayer1->Render(m_hDC, m_pCamera1);
-    m_pTrain1->Render(m_hDC, m_pCamera1);
-    m_pBomb->Render(m_hDC, m_pCamera1);
+    // 백버퍼 생성
+    HDC hMemDC = CreateCompatibleDC(m_hDC);
+    HBITMAP hBitmap = CreateCompatibleBitmap(m_hDC, SCREEN_W, SCREEN_H);
+    HBITMAP hOldBitmap = (HBITMAP)SelectObject(hMemDC, hBitmap);
 
-    // 플레이어2 화면 (하단)
-    m_pMap->Render(m_hDC, m_pCamera2, HALF_H);
-    m_pResource->Render(m_hDC, m_pCamera2, HALF_H);
-    m_pObstacle->Render(m_hDC, m_pCamera2, HALF_H);
-    m_pRail->Render(m_hDC, m_pCamera2, HALF_H);
-    m_pPlayer2->Render(m_hDC, m_pCamera2);
-    m_pTrain2->Render(m_hDC, m_pCamera2);
-    m_pBomb->Render(m_hDC, m_pCamera2);
+    // 배경 초기화
+    HBRUSH hBrush = CreateSolidBrush(RGB(0, 0, 0));
+    RECT rect = { 0, 0, SCREEN_W, SCREEN_H };
+    FillRect(hMemDC, &rect, hBrush);
+    DeleteObject(hBrush);
+
+    // 플레이어1 화면 (상단) - m_hDC → hMemDC
+    m_pMap->Render(hMemDC, m_pCamera1, 0);
+    m_pResource->Render(hMemDC, m_pCamera1, 0);
+    m_pObstacle->Render(hMemDC, m_pCamera1, 0);
+    m_pRail->Render(hMemDC, m_pCamera1, 0);
+    m_pPlayer1->Render(hMemDC, m_pCamera1);
+    m_pTrain1->Render(hMemDC, m_pCamera1);
+    m_pBomb->Render(hMemDC, m_pCamera1);
+
+    // 플레이어2 화면 (하단) - m_hDC → hMemDC
+    m_pMap->Render(hMemDC, m_pCamera2, HALF_H);
+    m_pResource->Render(hMemDC, m_pCamera2, HALF_H);
+    m_pObstacle->Render(hMemDC, m_pCamera2, HALF_H);
+    m_pRail->Render(hMemDC, m_pCamera2, HALF_H);
+    m_pPlayer2->Render(hMemDC, m_pCamera2);
+    m_pTrain2->Render(hMemDC, m_pCamera2);
+    m_pBomb->Render(hMemDC, m_pCamera2);
+
+    // 백버퍼 → 화면에 복사
+    RECT clientRect;
+    GetClientRect(m_hWnd, &clientRect);
+    int winW = clientRect.right;
+    int winH = clientRect.bottom;
+    StretchBlt(m_hDC, 0, 0, winW, winH, hMemDC, 0, 0, SCREEN_W, SCREEN_H, SRCCOPY);
+
+    // 정리
+    SelectObject(hMemDC, hOldBitmap);
+    DeleteObject(hBitmap);
+    DeleteDC(hMemDC);
 }
 
 void Game::OnKeyDown(WPARAM key)

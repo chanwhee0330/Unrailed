@@ -19,3 +19,6 @@ struct Vec2 {
 struct Camera {
     float x, y;
 };
+#define MAX_HEAT   100.0f //최대과열
+#define HEAT_RATE  0.07f //시간이 지날 때 마다 오름
+#define COOL_AMOUNT 5.0f // 냉각시 내려가는 양

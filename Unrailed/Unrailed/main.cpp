@@ -86,9 +86,12 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
 	{
         // 게임 객체를 생성합니다. (플레이어, 맵 등의 초기화가 여기서 일어남)
         g_game = new Game(hWnd);
+		SetTimer(hWnd, 1, 16, NULL);   // ← 추가
 		return 0;
 	}
-
+	case WM_TIMER:
+		if (g_game) g_game->Update();
+		return 0;
 	case WM_PAINT: // 2. 화면을 그려야 할 때마다 실행됨 (창 크기 조절, 가려졌다 나타날 때 등)
 	{
 		hDC = BeginPaint(hWnd, &ps);
@@ -101,7 +104,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
     case WM_KEYDOWN: // 3. 키보드가 눌렸을 때 실행됨
     {
         // 키가 눌리면 게임의 상태(위치, 충돌 등)를 업데이트합니다.
-        if (g_game) g_game->Update();
+        //if (g_game) g_game->Update(); 이거 자꾸 이동키 꾹 누르면 플레이어 빨라져서 주석처리함.
         return 0;
     }
 
@@ -109,6 +112,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
 	{
         // 메모리 누수를 방지하기 위해 생성했던 게임 객체를 삭제합니다.
         delete g_game;
+		KillTimer(hWnd, 1);
 		PostQuitMessage(0); // 메시지 루프를 종료시킴
 		return 0;
 	}

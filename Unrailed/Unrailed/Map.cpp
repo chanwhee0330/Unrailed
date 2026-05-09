@@ -6,8 +6,11 @@ Map::Map() : tileSet(nullptr) {
             tiles[y][x] = 0;
         }
     }
-    // For now, we still use the background image if available
-    tileSet = new Image(L"Image\\Map\\UnrailedMap.png");
+    // Load the background image as a Bitmap to use GetPixel
+    tileSet = new Bitmap(L"Image\\Map\\UnrailedMap.png");
+    if (tileSet->GetLastStatus() != Ok) {
+        // Fallback or debug message could go here
+    }
 }
 
 Map::~Map() {
@@ -33,19 +36,31 @@ void Map::LoadMap(const std::wstring& csvPath) {
 }
 
 void Map::Draw(Graphics* g, const Camera& cam, int viewWidth, int viewHeight) {
-    // Just draw the background for now
-    // In a real tile engine, we'd loop through visible tiles
-    g->DrawImage(tileSet, 0, 0);
+    if (tileSet) {
+        g->DrawImage(tileSet, 0, 0);
+    }
 }
 
 bool Map::IsSolid(float x, float y) {
-    int tx = (int)(x / TILE_SIZE);
-    int ty = (int)(y / TILE_SIZE);
+    if (!tileSet || tileSet->GetLastStatus() != Ok) return false;
 
-    if (tx < 0 || tx >= MAP_WIDTH || ty < 0 || ty >= MAP_HEIGHT) return true;
+    int imgW = tileSet->GetWidth();
+    int imgH = tileSet->GetHeight();
 
-    // Hardcoded wall IDs based on observation of CSV (values != 16 seem to be walls/river)
-    // Looking at the CSV sample: 16 was dominant (likely ground), 12, 25, 48, etc were in the middle.
-    // Let's assume for now any ID != 16 is solid in Layer 1.
-    return tiles[ty][tx] != 16;
+    if (x < 0 || y < 0 || x >= imgW || y >= imgH) return true;
+
+    Color color;
+    tileSet->GetPixel((int)x, (int)y, &color);
+
+    BYTE r = color.GetR();
+    BYTE g = color.GetG();
+    BYTE b = color.GetB();
+
+    // "Green" detection: 
+    // We want to be careful here. Green usually has a high G value relative to R and B.
+    // Grass in maps is often something like (100, 200, 100).
+    bool isGreen = (g > 80 && g > r && g > b);
+
+    // If it's green, it's NOT solid (movable). Otherwise, it IS solid.
+    return !isGreen;
 }

@@ -14,5 +14,5 @@ public:
 
 private:
     int tiles[MAP_HEIGHT][MAP_WIDTH];
-    Image* tileSet;
+    Bitmap* tileSet;
 };

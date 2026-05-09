@@ -1,62 +1,86 @@
-#include <windows.h>
-#include <gdiplus.h>
-#pragma comment(lib, "gdiplus.lib")
+#include <tchar.h>
 #include "Game.h"
-Game* g_pGame = nullptr;
 
-using namespace Gdiplus;
-LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
+#pragma comment(lib,"gdiplus.lib")
+
+#define marginX 16
+#define marginY 39
+
+HINSTANCE g_hInst;
+LPCTSTR lpszClass = L"Window Class Name";
+LPCTSTR lpszWindowName = L"Unrailed";
+
+LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam);
+
+ULONG_PTR g_gdiplusToken;
+Game* g_game = nullptr;
+
+int  WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _In_  LPSTR lpszCmdParam, _In_  int nCmdShow)
 {
-    switch (message)
-    {
-    case WM_KEYDOWN: if (g_pGame) g_pGame->OnKeyDown(wParam); break;
-    case WM_KEYUP:   if (g_pGame) g_pGame->OnKeyUp(wParam);   break;
-    case WM_DESTROY: PostQuitMessage(0); break;
-    default: return DefWindowProc(hWnd, message, wParam, lParam);
-    }
-    return 0;
+	HWND hWnd;
+	MSG Message;
+	WNDCLASSEX WndClass;
+	g_hInst = hInstance;
+
+	GdiplusStartupInput gdiplusStartupInput;
+	GdiplusStartup(&g_gdiplusToken, &gdiplusStartupInput, NULL);
+
+	WndClass.cbSize = sizeof(WndClass);
+	WndClass.style = CS_HREDRAW | CS_VREDRAW;
+	WndClass.lpfnWndProc = (WNDPROC)WndProc;
+	WndClass.cbClsExtra = 0;
+	WndClass.cbWndExtra = 0;
+	WndClass.hInstance = hInstance;
+	WndClass.hIcon = LoadIcon(NULL, IDI_APPLICATION);
+	WndClass.hCursor = LoadCursor(NULL, IDI_APPLICATION);
+	WndClass.hbrBackground = (HBRUSH)GetStockObject(WHITE_BRUSH);
+	WndClass.lpszMenuName = NULL;
+	WndClass.lpszClassName = lpszClass;
+	WndClass.hIconSm = LoadIcon(NULL, IDI_APPLICATION);
+	RegisterClassEx(&WndClass);
+
+	hWnd = CreateWindow(lpszClass, lpszWindowName, WS_OVERLAPPEDWINDOW, 0, 0, SCREEN_WIDTH + marginX, SCREEN_HEIGHT + marginY, NULL, (HMENU)NULL, hInstance, NULL);
+	ShowWindow(hWnd, nCmdShow);
+	UpdateWindow(hWnd);
+
+	while (GetMessage(&Message, 0, 0, 0)) {
+		TranslateMessage(&Message);
+		DispatchMessage(&Message);
+	}
+
+    GdiplusShutdown(g_gdiplusToken);
+	return (int)Message.wParam;
 }
 
-int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
+LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
 {
-    GdiplusStartupInput gdiplusInput;
-    ULONG_PTR gdiplusToken;
-    GdiplusStartup(&gdiplusToken, &gdiplusInput, NULL);
-
-    WNDCLASSEX wcex = {};
-    wcex.cbSize = sizeof(WNDCLASSEX);
-    wcex.lpfnWndProc = WndProc;
-    wcex.hInstance = hInstance;
-    wcex.lpszClassName = L"UnrailedClass";
-    RegisterClassEx(&wcex);
-
-    HWND hWnd = CreateWindow(L"UnrailedClass", L"Unrailed",
-        WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, 0, 1920, 1080,
-        nullptr, nullptr, hInstance, nullptr);
-    ShowWindow(hWnd, nCmdShow);
-
-    g_pGame = new Game(hWnd);
-    g_pGame->Init();
-
-
-    MSG msg = {};
-    while (msg.message != WM_QUIT)
+	PAINTSTRUCT ps;
+	HDC hDC;
+	switch (iMessage) {
+	case WM_CREATE:
+	{
+        g_game = new Game(hWnd);
+		return 0;
+	}
+	case WM_PAINT:
+	{
+		hDC = BeginPaint(hWnd, &ps);
+        if (g_game) g_game->Draw(hDC);
+		EndPaint(hWnd, &ps);
+		return 0;
+	}
+    case WM_KEYDOWN:
     {
-        if (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE))
-        {
-            TranslateMessage(&msg);
-            DispatchMessage(&msg);
-        }
-        else
-        {
-            g_pGame->Update();
-            g_pGame->Render();
-        }
+        if (g_game) g_game->Update();
+        return 0;
     }
-
-    delete g_pGame;
-
-    // GDI+ 종료 ← delete g_pGame 아래에 추가
-    GdiplusShutdown(gdiplusToken);
-    return (int)msg.wParam;
+	case WM_DESTROY:
+	{
+        delete g_game;
+		PostQuitMessage(0);
+		return 0;
+	}
+	}
+	return (DefWindowProc(hWnd, iMessage, wParam, lParam));
 }
+

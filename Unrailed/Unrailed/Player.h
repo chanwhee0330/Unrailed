@@ -1,22 +1,20 @@
 #pragma once
-#include <windows.h>
-#include "Defines.h"
+#include "Common.h"
 
-class Camera;
-
-class Player
-{
+class Player {
 public:
-    Player(int num);
+    Player(int id, float x, float y, Color color);
     ~Player();
-    void Init();
-    void Update();
-    void Render(HDC hdc, Camera* camera);
-    void OnKeyDown(WPARAM key);
-    void OnKeyUp(WPARAM key);
-    float GetX() const { return m_x; }
-    float GetY() const { return m_y; }
+
+    void Update(bool up, bool down, bool left, bool right, class Map* map);
+    void Draw(Graphics* g, const Camera& cam);
+
+    Vec2 GetPos() const { return pos; }
+
 private:
-    int   m_num;
-    float m_x, m_y;
+    int id;
+    Vec2 pos;
+    float speed;
+    Color color;
+    float size;
 };

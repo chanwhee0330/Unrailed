@@ -14,7 +14,7 @@ Game::Game(HWND hWnd) : hWnd(hWnd), gameOver(false), winner(0) {
     oldBitmap = (HBITMAP)SelectObject(memDC, memBitmap);
     ReleaseDC(hWnd, hdc);
     train1 = new Train(0, 500, 1, L"Image\\train\\locomoto.png");
-    train2 = new Train((float)(MAP_WIDTH * TILE_SIZE - 96), 700, -1, L"Image\\train\\locomoto2.png");
+    train2 = new Train((float)(MAP_WIDTH * TILE_SIZE - 96), 1400, -1, L"Image\\train\\locomoto2.png");
     cam1 = {0, 0};
     cam2 = {0, 0};
 }
@@ -76,6 +76,7 @@ void Game::Draw(HDC hDC) {
     p1->Draw(&g1, cam1);
     p2->Draw(&g1, cam1);
     train1->Draw(&g1);
+    train2->Draw(&g1);
     // --- View 2 (Player 2) ---
     Graphics g2(memDC);
     g2.SetClip(Rect(0, halfH, SCREEN_WIDTH, halfH));
@@ -84,6 +85,7 @@ void Game::Draw(HDC hDC) {
     map->Draw(&g2, cam2, SCREEN_WIDTH, halfH);
     p1->Draw(&g2, cam2);
     p2->Draw(&g2, cam2);
+    train1->Draw(&g2);
     train2->Draw(&g2);
     if (gameOver) {
         Graphics g(memDC);

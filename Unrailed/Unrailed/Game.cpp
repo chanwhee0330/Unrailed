@@ -17,6 +17,18 @@ Game::Game(HWND hWnd) : hWnd(hWnd), gameOver(false), winner(0) {
     train2 = new Train((float)(MAP_WIDTH * TILE_SIZE - 96), 1400, -1, L"Image\\train\\locomoto2.png");
     cam1 = {0, 0};
     cam2 = {0, 0};
+    rail = new Rail();
+    // train1
+    int t1X = (int)(train1->GetPos().x / TILE_SIZE);
+    int t1Y = (int)((train1->GetPos().y + 24) / TILE_SIZE); // +24 = 기차 높이(48)의 절반
+    for (int i = 0; i < 5; i++)
+        rail->PlaceRail(t1X + i, t1Y, RailDir::HORIZONTAL, 1);
+
+    // train2
+    int t2X = (int)(train2->GetPos().x / TILE_SIZE);
+    int t2Y = (int)((train2->GetPos().y + 24) / TILE_SIZE);
+    for (int i = 0; i < 5; i++)
+        rail->PlaceRail(t2X + 2 - i, t2Y, RailDir::HORIZONTAL, 2); 
 }
 
 Game::~Game() {
@@ -25,6 +37,7 @@ Game::~Game() {
     delete map;
     delete train1;
     delete train2;
+    delete rail;
 
     SelectObject(memDC, oldBitmap);
     DeleteObject(memBitmap);
@@ -37,8 +50,31 @@ void Game::Update() {
     p1->Update(GetAsyncKeyState('W'), GetAsyncKeyState('S'), GetAsyncKeyState('A'), GetAsyncKeyState('D'), map);
     p2->Update(GetAsyncKeyState(VK_UP), GetAsyncKeyState(VK_DOWN), GetAsyncKeyState(VK_LEFT), GetAsyncKeyState(VK_RIGHT), map);
    
-    train1->Update();
-    train2->Update();
+    bool rKey = GetAsyncKeyState('R') & 0x8000;
+    if (rKey && !rKeyPrev) {
+        selectedDir1 = (selectedDir1 == RailDir::HORIZONTAL) ? RailDir::VERTICAL : RailDir::HORIZONTAL;
+    }
+    rKeyPrev = rKey;
+
+    bool twoKey = GetAsyncKeyState('2') & 0x8000;
+    if (twoKey && !twoKeyPrev) {
+        selectedDir2 = (selectedDir2 == RailDir::HORIZONTAL) ? RailDir::VERTICAL : RailDir::HORIZONTAL;
+    }
+    twoKeyPrev = twoKey;
+    // 설치
+    if (GetAsyncKeyState('E') & 0x8000) {
+        int tileX = (int)(p1->GetPos().x / TILE_SIZE);
+        int tileY = (int)(p1->GetPos().y / TILE_SIZE);
+        rail->PlaceRail(tileX, tileY, selectedDir1, 1);
+    }
+
+    if (GetAsyncKeyState('1') & 0x8000) {
+        int tileX = (int)(p2->GetPos().x / TILE_SIZE);
+        int tileY = (int)(p2->GetPos().y / TILE_SIZE);
+        rail->PlaceRail(tileX, tileY, selectedDir2, 2);
+    }
+    train1->Update(rail);
+    train2->Update(rail);
 
     if (train1->IsFinished() && !train2->IsFinished()) { gameOver = true; winner = 1; }
     else if (train2->IsFinished() && !train1->IsFinished()) { gameOver = true; winner = 2; }
@@ -73,8 +109,16 @@ void Game::Draw(HDC hDC) {
     g1.Clear(Color(255, 255, 255));
     g1.TranslateTransform(-cam1.x, -cam1.y);
     map->Draw(&g1, cam1, SCREEN_WIDTH, halfH);
+    //미리보기
+    int preX1 = (int)(p1->GetPos().x / TILE_SIZE) * TILE_SIZE;
+    int preY1 = (int)(p1->GetPos().y / TILE_SIZE) * TILE_SIZE;
+    SolidBrush previewBrush1(Color(120, 255, 255, 0));
+    g1.FillRectangle(&previewBrush1, (float)preX1, (float)preY1, (float)TILE_SIZE, (float)TILE_SIZE);
+    rail->DrawPreview(&g1, preX1, preY1, selectedDir1);
+
     p1->Draw(&g1, cam1);
     p2->Draw(&g1, cam1);
+    rail->Draw(&g1);
     train1->Draw(&g1);
     train2->Draw(&g1);
     // --- View 2 (Player 2) ---
@@ -83,8 +127,16 @@ void Game::Draw(HDC hDC) {
     g2.TranslateTransform(0, (REAL)halfH);
     g2.TranslateTransform(-cam2.x, -cam2.y);
     map->Draw(&g2, cam2, SCREEN_WIDTH, halfH);
+    //미리보기
+    int preX2 = (int)(p2->GetPos().x / TILE_SIZE) * TILE_SIZE;
+    int preY2 = (int)(p2->GetPos().y / TILE_SIZE) * TILE_SIZE;
+    SolidBrush previewBrush2(Color(120, 0, 255, 255));
+    g2.FillRectangle(&previewBrush2, (float)preX2, (float)preY2, (float)TILE_SIZE, (float)TILE_SIZE);
+    rail->DrawPreview(&g2, preX2, preY2, selectedDir2);
+
     p1->Draw(&g2, cam2);
     p2->Draw(&g2, cam2);
+    rail->Draw(&g2);
     train1->Draw(&g2);
     train2->Draw(&g2);
     if (gameOver) {

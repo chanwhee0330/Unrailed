@@ -1,7 +1,7 @@
 #include "Train.h"
 
 Train::Train(float x, float y, int direction, const wchar_t* imagePath)
-    : pos({ x, y }), speed(5.0f), heat(0.0f), dir(direction), finished(false) {
+    : pos({ x, y }), speed(5.0f), heat(0.0f), dirX((float)direction), dirY(0.0f), finished(false) {
     image = new Bitmap(imagePath);
     lastTime = GetTickCount64();
 }
@@ -12,27 +12,53 @@ Train::~Train()
    
 }
 
-void Train::Update() {
+void Train::UpdateDirection(RailDir rd) {
+    switch (rd) {
+    case RailDir::HORIZONTAL: dirY = 0;  break;
+    case RailDir::VERTICAL:   dirX = 0;  break;
+    case RailDir::TURN_RD:
+        if (dirX < 0) { dirX = 0;  dirY = 1; }
+        else if (dirY < 0) { dirX = 1;  dirY = 0; }
+        break;
+    case RailDir::TURN_LD:
+        if (dirX > 0) { dirX = 0;  dirY = 1; }
+        else if (dirY < 0) { dirX = -1; dirY = 0; }
+        break;
+    case RailDir::TURN_RU:
+        if (dirX < 0) { dirX = 0;  dirY = -1; }
+        else if (dirY > 0) { dirX = 1;  dirY = 0; }
+        break;
+    case RailDir::TURN_LU:
+        if (dirX > 0) { dirX = 0;  dirY = -1; }
+        else if (dirY > 0) { dirX = -1; dirY = 0; }
+        break;
+    }
+}
+void Train::Update(Rail* rail) {
     if (finished) return;
-
-    // 과열 상태면 이동 정지 (열은 계속 쌓임)
     if (!IsOverheated()) {
         ULONGLONG now = GetTickCount64();
-        float     delta = (now - lastTime) / 1000.0f;
+        float delta = (now - lastTime) / 1000.0f;
         lastTime = now;
 
-        pos.x += speed * dir * delta;
+        // 현재 타일 확인
+        int tileX = (int)((pos.x + 48) / TILE_SIZE);
+        int tileY = (int)((pos.y + 24) / TILE_SIZE);
 
-        // 오른쪽 끝 도달 (기차 1)
-        if (dir == 1 && pos.x >= MAP_WIDTH * TILE_SIZE)
+        if (rail->HasRail(tileX, tileY)) {
+            // 현재 타일 레일 방향으로 방향 업데이트 후 이동
+            UpdateDirection(rail->GetDir(tileX, tileY));
+            pos.x += speed * dirX * delta;
+            pos.y += speed * dirY * delta;
+            wchar_t buf[200];
+            swprintf(buf, 200, L"trainTileX=%d trainTileY=%d hasRail=%d\n",
+                tileX, tileY, rail->HasRail(tileX, tileY));
+            OutputDebugStringW(buf);
+        }
+        else {
             finished = true;
-
-        // 왼쪽 끝 도달 (기차 2)
-        if (dir == -1 && pos.x <= 0)
-            finished = true;
+        }
     }
-
-    // 열 누적
     heat += HEAT_RATE;
     if (heat > MAX_HEAT) heat = MAX_HEAT;
 }

@@ -162,8 +162,8 @@ void Game::DrawVictoryScreen(Graphics* g) {
     sf.SetLineAlignment(StringAlignmentCenter);
 
     std::wstring msg;
-    if (winner == 1) msg = L"Player 1 WIN!";
-    else if (winner == 2) msg = L"Player 2 WIN!";
+    if (winner == 1) msg = L"Player 2 WIN!";
+    else if (winner == 2) msg = L"Player 1 WIN!";
     else                  msg = L"DRAW!";
 
     RectF rect(0.0f, 0.0f, (REAL)SCREEN_WIDTH, (REAL)SCREEN_HEIGHT);

@@ -4,6 +4,7 @@
 #include "Map.h"
 #include "Train.h"
 #include "Rail.h"
+#include "Resource.h"
 
 class Game {
 public:
@@ -24,6 +25,7 @@ private:
     Camera cam1;
     Camera cam2;
     Rail* rail;
+    std::vector<Resource*> resources;
 
     bool    gameOver;
     int     winner;   // 1 or 2
@@ -35,5 +37,7 @@ private:
     RailDir selectedDir1 = RailDir::HORIZONTAL;
     RailDir selectedDir2 = RailDir::HORIZONTAL;
     static void ClampCamera(Camera& cam, int viewW, int viewH);
+    void CreateResources();
+    bool CanPlaceResourceAt(float x, float y) const;
     void DrawVictoryScreen(Graphics* g);
 };

@@ -29,6 +29,8 @@ Game::Game(HWND hWnd) : hWnd(hWnd), gameOver(false), winner(0) {
     int t2Y = (int)((train2->GetPos().y + 24) / TILE_SIZE);
     for (int i = 0; i < 5; i++)
         rail->PlaceRail(t2X + 2 - i, t2Y, RailDir::HORIZONTAL, 2); 
+
+    CreateResources();
 }
 
 Game::~Game() {
@@ -38,6 +40,9 @@ Game::~Game() {
     delete train1;
     delete train2;
     delete rail;
+    for (auto resource : resources) {
+        delete resource;
+    }
 
     SelectObject(memDC, oldBitmap);
     DeleteObject(memBitmap);
@@ -49,6 +54,9 @@ void Game::Update() {
 
     p1->Update(GetAsyncKeyState('W'), GetAsyncKeyState('S'), GetAsyncKeyState('A'), GetAsyncKeyState('D'), map);
     p2->Update(GetAsyncKeyState(VK_UP), GetAsyncKeyState(VK_DOWN), GetAsyncKeyState(VK_LEFT), GetAsyncKeyState(VK_RIGHT), map);
+    for (auto resource : resources) {
+        resource->Update(p1, p2, rail);
+    }
    
     bool rKey = GetAsyncKeyState('R') & 0x8000;
     if (rKey && !rKeyPrev) {
@@ -115,12 +123,23 @@ void Game::Draw(HDC hDC) {
     SolidBrush previewBrush1(Color(120, 255, 255, 0));
     g1.FillRectangle(&previewBrush1, (float)preX1, (float)preY1, (float)TILE_SIZE, (float)TILE_SIZE);
     rail->DrawPreview(&g1, preX1, preY1, selectedDir1);
+    for (auto resource : resources) {
+        resource->Draw(&g1);
+    }
 
-    p1->Draw(&g1, cam1);
-    p2->Draw(&g1, cam1);
     rail->Draw(&g1);
     train1->Draw(&g1);
     train2->Draw(&g1);
+
+    g1.Flush();
+    SaveDC(memDC);
+    IntersectClipRect(memDC, 0, 0, SCREEN_WIDTH, halfH);
+    p1->Draw(memDC, cam1, 0);
+    p2->Draw(memDC, cam1, 0);
+    p1->DrawInventory(memDC, cam1, 0);
+    p2->DrawInventory(memDC, cam1, 0);
+    RestoreDC(memDC, -1);
+
     // --- View 2 (Player 2) ---
     Graphics g2(memDC);
     g2.SetClip(Rect(0, halfH, SCREEN_WIDTH, halfH));
@@ -133,12 +152,23 @@ void Game::Draw(HDC hDC) {
     SolidBrush previewBrush2(Color(120, 0, 255, 255));
     g2.FillRectangle(&previewBrush2, (float)preX2, (float)preY2, (float)TILE_SIZE, (float)TILE_SIZE);
     rail->DrawPreview(&g2, preX2, preY2, selectedDir2);
+    for (auto resource : resources) {
+        resource->Draw(&g2);
+    }
 
-    p1->Draw(&g2, cam2);
-    p2->Draw(&g2, cam2);
     rail->Draw(&g2);
     train1->Draw(&g2);
     train2->Draw(&g2);
+
+    g2.Flush();
+    SaveDC(memDC);
+    IntersectClipRect(memDC, 0, halfH, SCREEN_WIDTH, SCREEN_HEIGHT);
+    p1->Draw(memDC, cam2, halfH);
+    p2->Draw(memDC, cam2, halfH);
+    p1->DrawInventory(memDC, cam2, halfH);
+    p2->DrawInventory(memDC, cam2, halfH);
+    RestoreDC(memDC, -1);
+
     if (gameOver) {
         Graphics g(memDC);
         DrawVictoryScreen(&g);
@@ -168,4 +198,48 @@ void Game::DrawVictoryScreen(Graphics* g) {
 
     RectF rect(0.0f, 0.0f, (REAL)SCREEN_WIDTH, (REAL)SCREEN_HEIGHT);
     g->DrawString(msg.c_str(), -1, &font, rect, &sf, &textBrush);
+}
+
+bool Game::CanPlaceResourceAt(float x, float y) const {
+    const float padding = 8.0f;
+    const float resourceSize = 64.0f;
+
+    if (map->IsSolid(x + padding, y + padding) ||
+        map->IsSolid(x + resourceSize - padding, y + padding) ||
+        map->IsSolid(x + padding, y + resourceSize - padding) ||
+        map->IsSolid(x + resourceSize - padding, y + resourceSize - padding)) {
+        return false;
+    }
+
+    int tileX = (int)((x + resourceSize / 2.0f) / TILE_SIZE);
+    int tileY = (int)((y + resourceSize / 2.0f) / TILE_SIZE);
+    return !rail->HasRail(tileX, tileY);
+}
+
+void Game::CreateResources() {
+    const int resourcesPerSide = 50;
+    const int centerTileX = MAP_WIDTH / 2;
+    const int sideStartTileX[2] = { 2, centerTileX + 2 };
+    const int sideEndTileX[2] = { centerTileX - 3, MAP_WIDTH - 3 };
+
+    for (int side = 0; side < 2; ++side) {
+        int created = 0;
+        int attempt = 0;
+
+        while (created < resourcesPerSide && attempt < 5000) {
+            int width = sideEndTileX[side] - sideStartTileX[side] + 1;
+            int tileX = sideStartTileX[side] + ((attempt * 7 + created * 11) % width);
+            int tileY = 3 + ((attempt * 13 + created * 5) % (MAP_HEIGHT - 6));
+            float x = (float)(tileX * TILE_SIZE);
+            float y = (float)(tileY * TILE_SIZE);
+
+            if (CanPlaceResourceAt(x, y)) {
+                ResourceType type = (created % 2 == 0) ? ResourceType::Tree : ResourceType::Rock;
+                resources.push_back(new Resource(type, x, y));
+                ++created;
+            }
+
+            ++attempt;
+        }
+    }
 }

@@ -1,10 +1,10 @@
-#include "Player.h"
+﻿#include "Player.h"
 #include "Map.h"
 
 Player::Player(int id, float x, float y, Color color) 
     : id(id), pos({ x, y }), color(color), speed(5.0f), size(64.0f),
     dir(PlayerDir::Down), isMoving(false),
-    frame(0), lastFrameTime(GetTickCount()), frameDelay(120)
+    frame(0), wood(0), stone(0), lastFrameTime(GetTickCount()), frameDelay(120)
 {
     LoadImages();
 }
@@ -34,6 +34,15 @@ int Player::GetDirectionRow() const {
     case PlayerDir::Right: return 3;
     }
     return 0;
+}
+
+RECT Player::GetRect() const {
+    RECT rc;
+    rc.left = (LONG)(pos.x + 12);
+    rc.top = (LONG)(pos.y + 16);
+    rc.right = (LONG)(pos.x + size - 12);
+    rc.bottom = (LONG)(pos.y + size - 6);
+    return rc;
 }
 
 void Player::Update(bool up, bool down, bool left, bool right, Map* map) {
@@ -110,4 +119,27 @@ void Player::Draw(HDC hdc, const Camera& cam, int offsetY) {
             frameHeight
         );
     }
+}
+
+void Player::DrawInventory(HDC hdc, const Camera& cam, int offsetY) {
+    int drawX = (int)(pos.x - cam.x);
+    int drawY = (int)(pos.y - cam.y) + offsetY;
+
+    wchar_t text[64];
+    swprintf_s(text, L"나무 : %d / 돌 : %d", wood, stone);
+
+    int oldBkMode = SetBkMode(hdc, TRANSPARENT);
+    COLORREF oldColor = SetTextColor(hdc, RGB(255, 255, 255));
+    HFONT font = CreateFontW(18, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+        DEFAULT_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Arial");
+    HFONT oldFont = (HFONT)SelectObject(hdc, font);
+
+    SetTextColor(hdc, RGB(0, 0, 0));
+    TextOutW(hdc, drawX, drawY, text, (int)wcslen(text));
+
+    SelectObject(hdc, oldFont);
+    DeleteObject(font);
+    SetTextColor(hdc, oldColor);
+    SetBkMode(hdc, oldBkMode);
 }

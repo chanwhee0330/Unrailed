@@ -116,11 +116,17 @@ void Game::Draw(HDC hDC) {
     g1.FillRectangle(&previewBrush1, (float)preX1, (float)preY1, (float)TILE_SIZE, (float)TILE_SIZE);
     rail->DrawPreview(&g1, preX1, preY1, selectedDir1);
 
-    p1->Draw(&g1, cam1);
-    p2->Draw(&g1, cam1);
     rail->Draw(&g1);
     train1->Draw(&g1);
     train2->Draw(&g1);
+
+    g1.Flush();
+    SaveDC(memDC);
+    IntersectClipRect(memDC, 0, 0, SCREEN_WIDTH, halfH);
+    p1->Draw(memDC, cam1, 0);
+    p2->Draw(memDC, cam1, 0);
+    RestoreDC(memDC, -1);
+
     // --- View 2 (Player 2) ---
     Graphics g2(memDC);
     g2.SetClip(Rect(0, halfH, SCREEN_WIDTH, halfH));
@@ -134,11 +140,17 @@ void Game::Draw(HDC hDC) {
     g2.FillRectangle(&previewBrush2, (float)preX2, (float)preY2, (float)TILE_SIZE, (float)TILE_SIZE);
     rail->DrawPreview(&g2, preX2, preY2, selectedDir2);
 
-    p1->Draw(&g2, cam2);
-    p2->Draw(&g2, cam2);
     rail->Draw(&g2);
     train1->Draw(&g2);
     train2->Draw(&g2);
+
+    g2.Flush();
+    SaveDC(memDC);
+    IntersectClipRect(memDC, 0, halfH, SCREEN_WIDTH, SCREEN_HEIGHT);
+    p1->Draw(memDC, cam2, halfH);
+    p2->Draw(memDC, cam2, halfH);
+    RestoreDC(memDC, -1);
+
     if (gameOver) {
         Graphics g(memDC);
         DrawVictoryScreen(&g);

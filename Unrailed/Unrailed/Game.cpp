@@ -64,7 +64,7 @@ void Game::Update() {
     }
     rKeyPrev = rKey;
 
-    bool twoKey = GetAsyncKeyState('2') & 0x8000;
+    bool twoKey = GetAsyncKeyState(VK_NUMPAD2) & 0x8000;
     if (twoKey && !twoKeyPrev) {
         selectedDir2 = (selectedDir2 == RailDir::HORIZONTAL) ? RailDir::VERTICAL : RailDir::HORIZONTAL;
     }
@@ -76,7 +76,7 @@ void Game::Update() {
         rail->PlaceRail(tileX, tileY, selectedDir1, 1);
     }
 
-    if (GetAsyncKeyState('1') & 0x8000) {
+    if (GetAsyncKeyState(VK_NUMPAD1) & 0x8000) {
         int tileX = (int)(p2->GetPos().x / TILE_SIZE);
         int tileY = (int)(p2->GetPos().y / TILE_SIZE);
         rail->PlaceRail(tileX, tileY, selectedDir2, 2);

@@ -4,9 +4,30 @@ Rail::Rail() {
     railImage = new Bitmap(L"Image\\train\\rail.png"); 
     turnImage = new Bitmap(L"Image\\train\\turn rail.png");
 }
+bool Rail::HasHorizontal(int tileX, int tileY) {
+    for (auto& r : rails)
+        if (r.tileX == tileX && r.tileY == tileY && r.dir == RailDir::HORIZONTAL) return true;
+    return false;
+}
+
+bool Rail::HasVertical(int tileX, int tileY) {
+    for (auto& r : rails)
+        if (r.tileX == tileX && r.tileY == tileY && r.dir == RailDir::VERTICAL) return true;
+    return false;
+}
 void Rail::PlaceRail(int tileX, int tileY, RailDir dir, int owner) {
     if (HasRail(tileX, tileY)) return;
-    RailDir autoDir = AutoDetectDir(tileX, tileY, dir); // dir 넘기기
+
+    // 수평 설치 시 위아래에 수직 레일 있으면 막기
+    if (dir == RailDir::HORIZONTAL) {
+        if (HasVertical(tileX, tileY - 1) || HasVertical(tileX, tileY + 1)) return;
+    }
+    // 수직 설치 시 좌우에 수평 레일 있으면 막기
+    if (dir == RailDir::VERTICAL) {
+        if (HasHorizontal(tileX - 1, tileY) || HasHorizontal(tileX + 1, tileY)) return;
+    }
+
+    RailDir autoDir = AutoDetectDir(tileX, tileY, dir);
     rails.push_back({ tileX, tileY, autoDir, owner });
     UpdateNeighbors(tileX, tileY);
 }

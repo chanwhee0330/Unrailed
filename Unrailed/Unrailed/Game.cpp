@@ -70,7 +70,7 @@ void Game::Update() {
     }
     rKeyPrev = rKey;
 
-    bool twoKey = GetAsyncKeyState('2') & 0x8000;
+    bool twoKey = GetAsyncKeyState(VK_NUMPAD2) & 0x8000;
     if (twoKey && !twoKeyPrev) {
         selectedDir2 = (selectedDir2 == RailDir::HORIZONTAL) ? RailDir::VERTICAL : RailDir::HORIZONTAL;
     }
@@ -82,7 +82,7 @@ void Game::Update() {
         rail->PlaceRail(tileX, tileY, selectedDir1, 1);
     }
 
-    if (GetAsyncKeyState('1') & 0x8000) {
+    if (GetAsyncKeyState(VK_NUMPAD1) & 0x8000) {
         int tileX = (int)(p2->GetPos().x / TILE_SIZE);
         int tileY = (int)(p2->GetPos().y / TILE_SIZE);
         rail->PlaceRail(tileX, tileY, selectedDir2, 2);
@@ -198,8 +198,8 @@ void Game::DrawVictoryScreen(Graphics* g) {
     sf.SetLineAlignment(StringAlignmentCenter);
 
     std::wstring msg;
-    if (winner == 1) msg = L"Player 1 WIN!";
-    else if (winner == 2) msg = L"Player 2 WIN!";
+    if (winner == 1) msg = L"Player 2 WIN!";
+    else if (winner == 2) msg = L"Player 1 WIN!";
     else                  msg = L"DRAW!";
 
     RectF rect(0.0f, 0.0f, (REAL)SCREEN_WIDTH, (REAL)SCREEN_HEIGHT);

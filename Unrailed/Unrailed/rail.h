@@ -26,7 +26,8 @@ private:
     std::vector<RailData> rails;
     Bitmap* railImage;
     Bitmap* turnImage;
-
+    bool HasHorizontal(int tileX, int tileY);
+    bool HasVertical(int tileX, int tileY);
     RailDir AutoDetectDir(int tileX, int tileY, RailDir baseDir);  // RailDir baseDir 추가
     void UpdateNeighbors(int tileX, int tileY);
 };

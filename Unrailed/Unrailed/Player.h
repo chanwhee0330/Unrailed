@@ -11,7 +11,7 @@ public:
     Player(int id, float x, float y, Color color);
     ~Player();
 
-    void Update(bool up, bool down, bool left, bool right, class Map* map);
+    void Update(bool up, bool down, bool left, bool right, class Map* map, float deltaTime);
     void Draw(HDC hdc, const Camera& cam, int offsetY);
     void DrawInventory(HDC hdc, const Camera& cam, int offsetY);
 

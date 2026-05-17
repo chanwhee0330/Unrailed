@@ -36,11 +36,11 @@ void Train::UpdateDirection(RailDir rd) {
 }
 void Train::Update(Rail* rail) {
     if (finished) return;
-    if (!IsOverheated()) {
-        ULONGLONG now = GetTickCount64();
-        float delta = (now - lastTime) / 1000.0f;
-        lastTime = now;
+    ULONGLONG now = GetTickCount64();
+    float delta = (now - lastTime) / 1000.0f;
+    lastTime = now;
 
+    if (!IsOverheated()) {
         // 현재 타일 확인
         int tileX = (int)((pos.x + 48) / TILE_SIZE);
         int tileY = (int)((pos.y + 24) / TILE_SIZE);
@@ -50,10 +50,6 @@ void Train::Update(Rail* rail) {
             UpdateDirection(rail->GetDir(tileX, tileY));
             pos.x += speed * dirX * delta;
             pos.y += speed * dirY * delta;
-            wchar_t buf[200];
-            swprintf(buf, 200, L"trainTileX=%d trainTileY=%d hasRail=%d\n",
-                tileX, tileY, rail->HasRail(tileX, tileY));
-            OutputDebugStringW(buf);
         }
         else {
             finished = true;

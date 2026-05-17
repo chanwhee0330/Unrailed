@@ -2,7 +2,7 @@
 #include "Map.h"
 
 Player::Player(int id, float x, float y, Color color) 
-    : id(id), pos({ x, y }), color(color), speed(5.0f), size(64.0f),
+    : id(id), pos({ x, y }), color(color), speed(300.0f), size(64.0f),
     dir(PlayerDir::Down), isMoving(false),
     frame(0), wood(0), stone(0), lastFrameTime(GetTickCount()), frameDelay(120)
 {
@@ -45,27 +45,28 @@ RECT Player::GetRect() const {
     return rc;
 }
 
-void Player::Update(bool up, bool down, bool left, bool right, Map* map) {
+void Player::Update(bool up, bool down, bool left, bool right, Map* map, float deltaTime) {
     Vec2 nextPos = pos;
     isMoving = false;
+    float moveAmount = speed * deltaTime;
 
     if (up) {
-        nextPos.y -= speed;
+        nextPos.y -= moveAmount;
         dir = PlayerDir::Up;
         isMoving = true;
     }
     if (down) {
-        nextPos.y += speed;
+        nextPos.y += moveAmount;
         dir = PlayerDir::Down;
         isMoving = true;
     }
     if (left) {
-        nextPos.x -= speed;
+        nextPos.x -= moveAmount;
         dir = PlayerDir::Left;
         isMoving = true;
     }
     if (right) {
-        nextPos.x += speed;
+        nextPos.x += moveAmount;
         dir = PlayerDir::Right;
         isMoving = true;
     }

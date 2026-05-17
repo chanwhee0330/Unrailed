@@ -17,6 +17,7 @@ Game::Game(HWND hWnd) : hWnd(hWnd), gameOver(false), winner(0) {
     train2 = new Train((float)(MAP_WIDTH * TILE_SIZE - 96), 1400, -1, L"Image\\train\\locomoto2.png");
     cam1 = {0, 0};
     cam2 = {0, 0};
+    lastUpdateTime = GetTickCount64();
     rail = new Rail();
     // train1
     int t1X = (int)(train1->GetPos().x / TILE_SIZE);
@@ -52,8 +53,13 @@ Game::~Game() {
 void Game::Update() {
     if (gameOver) return;
 
-    p1->Update(GetAsyncKeyState('W'), GetAsyncKeyState('S'), GetAsyncKeyState('A'), GetAsyncKeyState('D'), map);
-    p2->Update(GetAsyncKeyState(VK_UP), GetAsyncKeyState(VK_DOWN), GetAsyncKeyState(VK_LEFT), GetAsyncKeyState(VK_RIGHT), map);
+    ULONGLONG now = GetTickCount64();
+    float deltaTime = (now - lastUpdateTime) / 1000.0f;
+    lastUpdateTime = now;
+    if (deltaTime > 0.05f) deltaTime = 0.05f;
+
+    p1->Update(GetAsyncKeyState('W'), GetAsyncKeyState('S'), GetAsyncKeyState('A'), GetAsyncKeyState('D'), map, deltaTime);
+    p2->Update(GetAsyncKeyState(VK_UP), GetAsyncKeyState(VK_DOWN), GetAsyncKeyState(VK_LEFT), GetAsyncKeyState(VK_RIGHT), map, deltaTime);
     for (auto resource : resources) {
         resource->Update(p1, p2, rail);
     }

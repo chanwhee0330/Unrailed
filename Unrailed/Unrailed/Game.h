@@ -34,6 +34,7 @@ private:
     HDC memDC;
     HBITMAP memBitmap;
     HBITMAP oldBitmap;
+    ULONGLONG lastUpdateTime;
     RailDir selectedDir1 = RailDir::HORIZONTAL;
     RailDir selectedDir2 = RailDir::HORIZONTAL;
     static void ClampCamera(Camera& cam, int viewW, int viewH);

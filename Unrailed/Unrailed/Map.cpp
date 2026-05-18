@@ -36,8 +36,16 @@ void Map::LoadMap(const std::wstring& csvPath) {
 }
 
 void Map::Draw(Graphics* g, const Camera& cam, int viewWidth, int viewHeight) {
-    if (tileSet) {
-        g->DrawImage(tileSet, 0, 0);
+    if (tileSet && tileSet->GetLastStatus() == Ok) {
+        int srcX = max(0, (int)cam.x);
+        int srcY = max(0, (int)cam.y);
+        int srcW = min(viewWidth, (int)tileSet->GetWidth() - srcX);
+        int srcH = min(viewHeight, (int)tileSet->GetHeight() - srcY);
+
+        if (srcW <= 0 || srcH <= 0) return;
+
+        Rect dest(srcX, srcY, srcW, srcH);
+        g->DrawImage(tileSet, dest, srcX, srcY, srcW, srcH, UnitPixel);
     }
 }
 

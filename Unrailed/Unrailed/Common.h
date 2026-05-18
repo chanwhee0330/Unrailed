@@ -6,8 +6,8 @@
 
 using namespace Gdiplus;
 
-#define SCREEN_WIDTH 1920
-#define SCREEN_HEIGHT 1080
+#define SCREEN_WIDTH 1280
+#define SCREEN_HEIGHT 720
 #define MAP_WIDTH 90
 #define MAP_HEIGHT 60
 #define TILE_SIZE 32

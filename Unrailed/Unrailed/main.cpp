@@ -154,8 +154,8 @@ RECT GetResourceRect(Resource* resource);
 bool ResourceIntersectsPlayer(Resource* resource, Player* player);
 bool HasRailOnResourceSpawn(Resource* resource, Rail* rail);
 void StartResourceRespawn(Resource* resource);
-void HarvestResource(Resource* resource, Player* player);
-void UpdateResource(Resource* resource, Player* p1, Player* p2, Rail* rail);
+void HarvestResource(Resource* resource, Player* player, float deltaTime);
+void UpdateResource(Resource* resource, Player* p1, Player* p2, Rail* rail, float deltaTime);
 void DrawResource(Resource* resource, Graphics* g);
 bool CanPlaceResourceAt(float x, float y);
 void CreateResources();
@@ -178,7 +178,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
         game.selectedDir2 = RAIL_HORIZONTAL;
 
         InitPlayer(&game.p1, 1, 300, 400);
-        InitPlayer(&game.p2, 2, 2500, 960);
+        InitPlayer(&game.p2, 2, 2500, 1500);
         InitMap(&game.map);
         LoadMapCsv(&game.map, L"Image\\Map\\unTiled map_Tile Layer 1.csv");
         InitRail(&game.rail);
@@ -226,7 +226,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
 
                 // resource update
                 for (int i = 0; i < (int)game.resources.size(); i++) {
-                    UpdateResource(&game.resources[i], &game.p1, &game.p2, &game.rail);
+                    UpdateResource(&game.resources[i], &game.p1, &game.p2, &game.rail, deltaTime);
                 }
 
                 // rail direction change
@@ -890,8 +890,8 @@ void StartResourceRespawn(Resource* resource) {
     resource->respawnStartTime = GetTickCount64();
 }
 
-void HarvestResource(Resource* resource, Player* player) {
-    resource->harvestProgress += 0.025f;
+void HarvestResource(Resource* resource, Player* player, float deltaTime) {
+    resource->harvestProgress += deltaTime;
     if (resource->harvestProgress >= 1.0f) {
         if (resource->type == RESOURCE_TREE) player->wood++;
         else player->stone++;
@@ -899,7 +899,7 @@ void HarvestResource(Resource* resource, Player* player) {
     }
 }
 
-void UpdateResource(Resource* resource, Player* p1, Player* p2, Rail* rail) {
+void UpdateResource(Resource* resource, Player* p1, Player* p2, Rail* rail, float deltaTime) {
     if (resource->active && HasRailOnResourceSpawn(resource, rail)) {
         StartResourceRespawn(resource);
     }
@@ -913,8 +913,8 @@ void UpdateResource(Resource* resource, Player* p1, Player* p2, Rail* rail) {
         return;
     }
 
-    if (ResourceIntersectsPlayer(resource, p1)) HarvestResource(resource, p1);
-    else if (ResourceIntersectsPlayer(resource, p2)) HarvestResource(resource, p2);
+    if (ResourceIntersectsPlayer(resource, p1)) HarvestResource(resource, p1, deltaTime);
+    else if (ResourceIntersectsPlayer(resource, p2)) HarvestResource(resource, p2, deltaTime);
 }
 
 void DrawResource(Resource* resource, Graphics* g) {

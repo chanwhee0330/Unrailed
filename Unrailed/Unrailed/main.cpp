@@ -9,6 +9,7 @@
 #include <cwchar>
 #include <cstdlib>
 #include <ctime>
+#include <cmath>
 
 #pragma comment(lib, "gdiplus.lib")
 
@@ -19,6 +20,15 @@ using namespace Gdiplus;
 #define MAP_WIDTH 90
 #define MAP_HEIGHT 60
 #define TILE_SIZE 32
+#define BASE_WIDTH_TILES 10
+#define BASE_HEIGHT_TILES 10
+#define BASE_DOOR_HEIGHT_TILES 4
+#define BASE_START_RAIL_TILES 11
+#define RAIL_CRAFT_TIME 1.0f
+#define PLAYER_COLLISION_LEFT 14
+#define PLAYER_COLLISION_RIGHT 50
+#define PLAYER_COLLISION_TOP 17
+#define PLAYER_COLLISION_BOTTOM 42
 
 #define MAX_HEAT 100.0f
 #define HEAT_RATE 0.07f
@@ -56,6 +66,8 @@ struct Player {
     int frame;
     int wood;
     int stone;
+    int railCount;
+    float railCraftProgress;
     DWORD lastFrameTime;
     DWORD frameDelay;
 };
@@ -93,6 +105,11 @@ struct Resource {
     ULONGLONG respawnDelay;
 };
 
+struct BaseArea {
+    int x, y, w, h;
+    bool doorOnRight;
+};
+
 struct GameData {
     HWND hWnd;
     Player p1, p2;
@@ -105,6 +122,8 @@ struct GameData {
     int winner;
     bool rKeyPrev;
     bool twoKeyPrev;
+    bool f2KeyPrev;
+    bool infiniteRailMode;
     HDC memDC;
     HBITMAP memBitmap;
     HBITMAP oldBitmap;
@@ -124,6 +143,18 @@ void InitMap(MapData* map);
 void ReleaseMap(MapData* map);
 void LoadMapCsv(MapData* map, const std::wstring& csvPath);
 void DrawMap(MapData* map, Graphics* g, Camera cam, int viewW, int viewH);
+BaseArea GetBaseArea(int index);
+RECT GetPlayerRectAt(Player* p, Vec2 pos);
+bool RectsOverlap(RECT a, RECT b);
+bool IsPlayerInsideBase(Player* p, BaseArea base);
+bool IsBlockedByBaseWall(Player* p, Vec2 nextPos);
+bool IsRectInsideAnyBase(RECT rc);
+RECT GetRailCraftStationRect(BaseArea base);
+bool IsPlayerTouchingRailCraftStation(Player* p);
+void UpdateRailCraft(Player* p, float deltaTime);
+void DrawRailCraftStations(Graphics* g, Player* viewer);
+void DrawBase(Graphics* g, BaseArea base, bool viewerInside);
+void DrawBases(Graphics* g, Player* viewer);
 bool IsSolid(MapData* map, float x, float y);
 void InitPlayer(Player* p, int id, float x, float y);
 int GetPlayerFrameCount(Player* p);
@@ -138,7 +169,7 @@ bool HasHorizontal(Rail* rail, int tileX, int tileY);
 bool HasVertical(Rail* rail, int tileX, int tileY);
 bool HasRail(Rail* rail, int tileX, int tileY);
 void UpdateRailNeighbors(Rail* rail, int tileX, int tileY);
-void PlaceRail(Rail* rail, int tileX, int tileY, RailDir dir, int owner);
+bool PlaceRail(Rail* rail, int tileX, int tileY, RailDir dir, int owner);
 void DrawOneRailImage(Rail* rail, Graphics* g, float x, float y, RailDir dir, bool preview);
 void DrawRailPreview(Rail* rail, Graphics* g, int x, int y, RailDir dir);
 void DrawRails(Rail* rail, Graphics* g);
@@ -158,6 +189,7 @@ void HarvestResource(Resource* resource, Player* player, float deltaTime);
 void UpdateResource(Resource* resource, Player* p1, Player* p2, Rail* rail, float deltaTime);
 void DrawResource(Resource* resource, Graphics* g);
 bool CanPlaceResourceAt(float x, float y);
+bool FindRandomResourcePosition(float* outX, float* outY, int preferredSide = -1);
 void CreateResources();
 void DrawVictoryScreen(Graphics* g);
 
@@ -174,6 +206,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
         game.winner = 0;
         game.rKeyPrev = false;
         game.twoKeyPrev = false;
+        game.f2KeyPrev = false;
+        game.infiniteRailMode = false;
         game.selectedDir1 = RAIL_HORIZONTAL;
         game.selectedDir2 = RAIL_HORIZONTAL;
 
@@ -189,8 +223,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
         game.oldBitmap = (HBITMAP)SelectObject(game.memDC, game.memBitmap);
         ReleaseDC(hWnd, hdc);
 
-        InitTrain(&game.train1, 0, 500, 1, L"Image\\train\\locomoto.png");
-        InitTrain(&game.train2, (float)(MAP_WIDTH * TILE_SIZE - 96), 1400, -1, L"Image\\train\\locomoto2.png");
+        InitTrain(&game.train1, 64, 424, 1, L"Image\\train\\locomoto.png");
+        InitTrain(&game.train2, 2720, 1512, -1, L"Image\\train\\locomoto2.png");
 
         game.cam1 = { 0, 0 };
         game.cam2 = { 0, 0 };
@@ -199,11 +233,11 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
         // start rail
         int t1X = (int)(game.train1.pos.x / TILE_SIZE);
         int t1Y = (int)((game.train1.pos.y + 24) / TILE_SIZE);
-        for (int i = 0; i < 5; i++) PlaceRail(&game.rail, t1X + i, t1Y, RAIL_HORIZONTAL, 1);
+        for (int i = 0; i < BASE_START_RAIL_TILES; i++) PlaceRail(&game.rail, t1X + i, t1Y, RAIL_HORIZONTAL, 1);
 
         int t2X = (int)(game.train2.pos.x / TILE_SIZE);
         int t2Y = (int)((game.train2.pos.y + 24) / TILE_SIZE);
-        for (int i = 0; i < 5; i++) PlaceRail(&game.rail, t2X + 2 - i, t2Y, RAIL_HORIZONTAL, 2);
+        for (int i = 0; i < BASE_START_RAIL_TILES; i++) PlaceRail(&game.rail, t2X + 2 - i, t2Y, RAIL_HORIZONTAL, 2);
 
         CreateResources();
         SetTimer(hWnd, 1, 16, NULL);
@@ -228,6 +262,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
                 for (int i = 0; i < (int)game.resources.size(); i++) {
                     UpdateResource(&game.resources[i], &game.p1, &game.p2, &game.rail, deltaTime);
                 }
+                UpdateRailCraft(&game.p1, deltaTime);
+                UpdateRailCraft(&game.p2, deltaTime);
 
                 // rail direction change
                 bool rKey = GetAsyncKeyState('R') & 0x8000;
@@ -242,17 +278,31 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
                 }
                 game.twoKeyPrev = twoKey;
 
+                bool f2Key = GetAsyncKeyState(VK_F2) & 0x8000;
+                if (f2Key && !game.f2KeyPrev) {
+                    game.infiniteRailMode = !game.infiniteRailMode;
+                }
+                game.f2KeyPrev = f2Key;
+
                 // rail place
                 if (GetAsyncKeyState('E') & 0x8000) {
                     int tileX = (int)(game.p1.pos.x / TILE_SIZE);
                     int tileY = (int)(game.p1.pos.y / TILE_SIZE);
-                    PlaceRail(&game.rail, tileX, tileY, game.selectedDir1, 1);
+                    if ((game.infiniteRailMode || game.p1.railCount > 0) &&
+                        PlaceRail(&game.rail, tileX, tileY, game.selectedDir1, 1) &&
+                        !game.infiniteRailMode) {
+                        game.p1.railCount--;
+                    }
                 }
 
                 if ((GetAsyncKeyState(VK_NUMPAD1) & 0x8000) || (GetAsyncKeyState('1') & 0x8000)) {
                     int tileX = (int)(game.p2.pos.x / TILE_SIZE);
                     int tileY = (int)(game.p2.pos.y / TILE_SIZE);
-                    PlaceRail(&game.rail, tileX, tileY, game.selectedDir2, 2);
+                    if ((game.infiniteRailMode || game.p2.railCount > 0) &&
+                        PlaceRail(&game.rail, tileX, tileY, game.selectedDir2, 2) &&
+                        !game.infiniteRailMode) {
+                        game.p2.railCount--;
+                    }
                 }
 
                 // train move
@@ -303,14 +353,18 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
 
         int preX1 = (int)(game.p1.pos.x / TILE_SIZE) * TILE_SIZE;
         int preY1 = (int)(game.p1.pos.y / TILE_SIZE) * TILE_SIZE;
-        SolidBrush previewBrush1(Color(120, 255, 255, 0));
-        g1.FillRectangle(&previewBrush1, (float)preX1, (float)preY1, (float)TILE_SIZE, (float)TILE_SIZE);
-        DrawRailPreview(&game.rail, &g1, preX1, preY1, game.selectedDir1);
+        if (game.infiniteRailMode || game.p1.railCount > 0) {
+            SolidBrush previewBrush1(Color(120, 255, 255, 0));
+            g1.FillRectangle(&previewBrush1, (float)preX1, (float)preY1, (float)TILE_SIZE, (float)TILE_SIZE);
+            DrawRailPreview(&game.rail, &g1, preX1, preY1, game.selectedDir1);
+        }
 
         for (int i = 0; i < (int)game.resources.size(); i++) DrawResource(&game.resources[i], &g1);
         DrawRails(&game.rail, &g1);
         DrawTrain(&game.train1, &g1);
         DrawTrain(&game.train2, &g1);
+        DrawBases(&g1, &game.p1);
+        DrawRailCraftStations(&g1, &game.p1);
 
         g1.Flush();
         SaveDC(game.memDC);
@@ -330,14 +384,18 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
 
         int preX2 = (int)(game.p2.pos.x / TILE_SIZE) * TILE_SIZE;
         int preY2 = (int)(game.p2.pos.y / TILE_SIZE) * TILE_SIZE;
-        SolidBrush previewBrush2(Color(120, 0, 255, 255));
-        g2.FillRectangle(&previewBrush2, (float)preX2, (float)preY2, (float)TILE_SIZE, (float)TILE_SIZE);
-        DrawRailPreview(&game.rail, &g2, preX2, preY2, game.selectedDir2);
+        if (game.infiniteRailMode || game.p2.railCount > 0) {
+            SolidBrush previewBrush2(Color(120, 0, 255, 255));
+            g2.FillRectangle(&previewBrush2, (float)preX2, (float)preY2, (float)TILE_SIZE, (float)TILE_SIZE);
+            DrawRailPreview(&game.rail, &g2, preX2, preY2, game.selectedDir2);
+        }
 
         for (int i = 0; i < (int)game.resources.size(); i++) DrawResource(&game.resources[i], &g2);
         DrawRails(&game.rail, &g2);
         DrawTrain(&game.train1, &g2);
         DrawTrain(&game.train2, &g2);
+        DrawBases(&g2, &game.p2);
+        DrawRailCraftStations(&g2, &game.p2);
 
         g2.Flush();
         SaveDC(game.memDC);
@@ -509,6 +567,183 @@ void DrawMap(MapData* map, Graphics* g, Camera cam, int viewW, int viewH) {
     g->DrawImage(map->image, dest, srcX, srcY, srcW, srcH, UnitPixel);
 }
 
+BaseArea GetBaseArea(int index) {
+    BaseArea base;
+    base.w = BASE_WIDTH_TILES * TILE_SIZE;
+    base.h = BASE_HEIGHT_TILES * TILE_SIZE;
+
+    if (index == 0) {
+        base.x = 0;
+        base.y = 9 * TILE_SIZE;
+        base.doorOnRight = true;
+    }
+    else {
+        base.x = (MAP_WIDTH - BASE_WIDTH_TILES) * TILE_SIZE;
+        base.y = 43 * TILE_SIZE;
+        base.doorOnRight = false;
+    }
+
+    return base;
+}
+
+RECT GetPlayerRectAt(Player* p, Vec2 pos) {
+    RECT rc;
+    rc.left = (LONG)(pos.x + PLAYER_COLLISION_LEFT);
+    rc.top = (LONG)(pos.y + PLAYER_COLLISION_TOP);
+    rc.right = (LONG)(pos.x + PLAYER_COLLISION_RIGHT);
+    rc.bottom = (LONG)(pos.y + PLAYER_COLLISION_BOTTOM);
+    return rc;
+}
+
+bool RectsOverlap(RECT a, RECT b) {
+    RECT hit;
+    return IntersectRect(&hit, &a, &b) != 0;
+}
+
+bool IsPlayerInsideBase(Player* p, BaseArea base) {
+    RECT playerRect = GetPlayerRect(p);
+    RECT baseRect = { base.x, base.y, base.x + base.w, base.y + base.h };
+    return RectsOverlap(playerRect, baseRect);
+}
+
+bool IsBlockedByBaseWall(Player* p, Vec2 nextPos) {
+    RECT playerRect = GetPlayerRectAt(p, nextPos);
+    int wall = TILE_SIZE;
+    int doorH = BASE_DOOR_HEIGHT_TILES * TILE_SIZE;
+
+    for (int i = 0; i < 2; i++) {
+        BaseArea base = GetBaseArea(i);
+        int doorY = base.y + (base.h - doorH) / 2;
+        RECT walls[5];
+
+        walls[0] = { base.x, base.y, base.x + base.w, base.y + wall };
+        walls[1] = { base.x, base.y + base.h - wall, base.x + base.w, base.y + base.h };
+
+        if (base.doorOnRight) {
+            walls[2] = { base.x, base.y, base.x + wall, base.y + base.h };
+            walls[3] = { base.x + base.w - wall, base.y, base.x + base.w, doorY };
+            walls[4] = { base.x + base.w - wall, doorY + doorH, base.x + base.w, base.y + base.h };
+        }
+        else {
+            walls[2] = { base.x + base.w - wall, base.y, base.x + base.w, base.y + base.h };
+            walls[3] = { base.x, base.y, base.x + wall, doorY };
+            walls[4] = { base.x, doorY + doorH, base.x + wall, base.y + base.h };
+        }
+
+        for (int wallIndex = 0; wallIndex < 5; wallIndex++) {
+            if (RectsOverlap(playerRect, walls[wallIndex])) return true;
+        }
+    }
+
+    return false;
+}
+
+bool IsRectInsideAnyBase(RECT rc) {
+    for (int i = 0; i < 2; i++) {
+        BaseArea base = GetBaseArea(i);
+        RECT baseRect = { base.x, base.y, base.x + base.w, base.y + base.h };
+        if (RectsOverlap(rc, baseRect)) return true;
+    }
+
+    return false;
+}
+
+RECT GetRailCraftStationRect(BaseArea base) {
+    int stationX = base.doorOnRight ? base.x + 2 * TILE_SIZE : base.x + base.w - 3 * TILE_SIZE;
+    int stationY = base.y + 2 * TILE_SIZE;
+    return { stationX, stationY, stationX + TILE_SIZE, stationY + TILE_SIZE };
+}
+
+bool IsPlayerTouchingRailCraftStation(Player* p) {
+    RECT playerRect = GetPlayerRect(p);
+
+    for (int i = 0; i < 2; i++) {
+        RECT stationRect = GetRailCraftStationRect(GetBaseArea(i));
+        if (RectsOverlap(playerRect, stationRect)) return true;
+    }
+
+    return false;
+}
+
+void UpdateRailCraft(Player* p, float deltaTime) {
+    if (!IsPlayerTouchingRailCraftStation(p) || p->wood <= 0 || p->stone <= 0) {
+        p->railCraftProgress = 0.0f;
+        return;
+    }
+
+    p->railCraftProgress += deltaTime;
+    if (p->railCraftProgress >= RAIL_CRAFT_TIME) {
+        p->wood--;
+        p->stone--;
+        p->railCount++;
+        p->railCraftProgress = 0.0f;
+    }
+}
+
+void DrawRailCraftStations(Graphics* g, Player* viewer) {
+    for (int i = 0; i < 2; i++) {
+        BaseArea base = GetBaseArea(i);
+        if (!IsPlayerInsideBase(viewer, base)) continue;
+
+        RECT rc = GetRailCraftStationRect(base);
+        SolidBrush tableBrush(Color(255, 130, 82, 42));
+        Pen tableEdge(Color(255, 70, 40, 18), 2.0f);
+        SolidBrush railBrush(Color(255, 55, 55, 60));
+
+        g->FillRectangle(&tableBrush, rc.left, rc.top, TILE_SIZE, TILE_SIZE);
+        g->DrawRectangle(&tableEdge, rc.left, rc.top, TILE_SIZE, TILE_SIZE);
+        g->FillRectangle(&railBrush, rc.left + 6, rc.top + 9, TILE_SIZE - 12, 4);
+        g->FillRectangle(&railBrush, rc.left + 6, rc.top + 19, TILE_SIZE - 12, 4);
+
+        if (RectsOverlap(GetPlayerRect(viewer), rc) && viewer->railCraftProgress > 0.0f) {
+            float ratio = viewer->railCraftProgress / RAIL_CRAFT_TIME;
+            if (ratio > 1.0f) ratio = 1.0f;
+
+            SolidBrush bgBrush(Color(255, 0, 0, 0));
+            SolidBrush fillBrush(Color(255, 255, 210, 40));
+            g->FillRectangle(&bgBrush, (float)rc.left, (float)(rc.top - 10), (float)TILE_SIZE, 6.0f);
+            g->FillRectangle(&fillBrush, (float)rc.left, (float)(rc.top - 10), (float)TILE_SIZE * ratio, 6.0f);
+        }
+    }
+}
+
+void DrawBase(Graphics* g, BaseArea base, bool viewerInside) {
+    int wall = TILE_SIZE;
+    int doorH = BASE_DOOR_HEIGHT_TILES * TILE_SIZE;
+    int doorY = base.y + (base.h - doorH) / 2;
+
+    SolidBrush cover(viewerInside ? Color(55, 80, 180, 255) : Color(235, 20, 24, 30));
+    SolidBrush wallBrush(Color(255, 70, 48, 32));
+    Pen edgePen(Color(255, 20, 18, 16), 2.0f);
+    SolidBrush doorBrush(Color(150, 255, 210, 70));
+
+    g->FillRectangle(&cover, base.x, base.y, base.w, base.h);
+    g->DrawRectangle(&edgePen, base.x, base.y, base.w, base.h);
+
+    g->FillRectangle(&wallBrush, base.x, base.y, base.w, wall);
+    g->FillRectangle(&wallBrush, base.x, base.y + base.h - wall, base.w, wall);
+
+    if (base.doorOnRight) {
+        g->FillRectangle(&wallBrush, base.x, base.y, wall, base.h);
+        g->FillRectangle(&wallBrush, base.x + base.w - wall, base.y, wall, doorY - base.y);
+        g->FillRectangle(&wallBrush, base.x + base.w - wall, doorY + doorH, wall, base.y + base.h - doorY - doorH);
+        g->FillRectangle(&doorBrush, base.x + base.w - wall, doorY, wall, doorH);
+    }
+    else {
+        g->FillRectangle(&wallBrush, base.x + base.w - wall, base.y, wall, base.h);
+        g->FillRectangle(&wallBrush, base.x, base.y, wall, doorY - base.y);
+        g->FillRectangle(&wallBrush, base.x, doorY + doorH, wall, base.y + base.h - doorY - doorH);
+        g->FillRectangle(&doorBrush, base.x, doorY, wall, doorH);
+    }
+}
+
+void DrawBases(Graphics* g, Player* viewer) {
+    for (int i = 0; i < 2; i++) {
+        BaseArea base = GetBaseArea(i);
+        DrawBase(g, base, IsPlayerInsideBase(viewer, base));
+    }
+}
+
 bool IsSolid(MapData* map, float x, float y) {
     if (x < 0 || y < 0 || x >= map->pixelW || y >= map->pixelH) return true;
     if (map->solidBits.empty()) return false;
@@ -529,6 +764,8 @@ void InitPlayer(Player* p, int id, float x, float y) {
     p->frame = 0;
     p->wood = 0;
     p->stone = 0;
+    p->railCount = 0;
+    p->railCraftProgress = 0.0f;
     p->lastFrameTime = GetTickCount();
     p->frameDelay = 120;
 
@@ -555,29 +792,35 @@ int GetPlayerDirectionRow(Player* p) {
 }
 
 RECT GetPlayerRect(Player* p) {
-    RECT rc;
-    rc.left = (LONG)(p->pos.x + 12);
-    rc.top = (LONG)(p->pos.y + 16);
-    rc.right = (LONG)(p->pos.x + p->size - 12);
-    rc.bottom = (LONG)(p->pos.y + p->size - 6);
-    return rc;
+    return GetPlayerRectAt(p, p->pos);
 }
 
 void UpdatePlayer(Player* p, bool up, bool down, bool left, bool right, MapData* map, float deltaTime) {
     Vec2 nextPos = p->pos;
     p->isMoving = false;
     float moveAmount = p->speed * deltaTime;
+    float moveX = 0.0f;
+    float moveY = 0.0f;
 
-    if (up) { nextPos.y -= moveAmount; p->dir = DIR_UP; p->isMoving = true; }
-    if (down) { nextPos.y += moveAmount; p->dir = DIR_DOWN; p->isMoving = true; }
-    if (left) { nextPos.x -= moveAmount; p->dir = DIR_LEFT; p->isMoving = true; }
-    if (right) { nextPos.x += moveAmount; p->dir = DIR_RIGHT; p->isMoving = true; }
+    if (up) { moveY -= 1.0f; p->dir = DIR_UP; }
+    if (down) { moveY += 1.0f; p->dir = DIR_DOWN; }
+    if (left) { moveX -= 1.0f; p->dir = DIR_LEFT; }
+    if (right) { moveX += 1.0f; p->dir = DIR_RIGHT; }
+
+    if (moveX != 0.0f || moveY != 0.0f) {
+        float length = sqrtf(moveX * moveX + moveY * moveY);
+        nextPos.x += (moveX / length) * moveAmount;
+        nextPos.y += (moveY / length) * moveAmount;
+        p->isMoving = true;
+    }
 
     bool collision = false;
-    if (IsSolid(map, nextPos.x, nextPos.y) ||
-        IsSolid(map, nextPos.x + p->size, nextPos.y) ||
-        IsSolid(map, nextPos.x, nextPos.y + p->size) ||
-        IsSolid(map, nextPos.x + p->size, nextPos.y + p->size)) {
+    RECT nextRect = GetPlayerRectAt(p, nextPos);
+    if (IsSolid(map, (float)nextRect.left, (float)nextRect.top) ||
+        IsSolid(map, (float)(nextRect.right - 1), (float)nextRect.top) ||
+        IsSolid(map, (float)nextRect.left, (float)(nextRect.bottom - 1)) ||
+        IsSolid(map, (float)(nextRect.right - 1), (float)(nextRect.bottom - 1)) ||
+        IsBlockedByBaseWall(p, nextPos)) {
         collision = true;
     }
 
@@ -615,7 +858,10 @@ void DrawInventory(Player* p, HDC hdc, Camera cam, int offsetY) {
     int y = (int)(p->pos.y - cam.y) + offsetY;
 
     wchar_t text[64];
-    swprintf_s(text, L"Wood:%d Stone:%d", p->wood, p->stone);
+    if(p->railCount>0)
+        swprintf_s(text, L"나무:%d / 돌:%d / 레일:%d", p->wood, p->stone, p->railCount);
+    else
+        swprintf_s(text, L"나무:%d / 돌:%d", p->wood, p->stone);
 
     int oldBkMode = SetBkMode(hdc, TRANSPARENT);
     COLORREF oldColor = SetTextColor(hdc, RGB(0, 0, 0));
@@ -704,14 +950,14 @@ void UpdateRailNeighbors(Rail* rail, int tileX, int tileY) {
     }
 }
 
-void PlaceRail(Rail* rail, int tileX, int tileY, RailDir dir, int owner) {
-    if (HasRail(rail, tileX, tileY)) return;
+bool PlaceRail(Rail* rail, int tileX, int tileY, RailDir dir, int owner) {
+    if (HasRail(rail, tileX, tileY)) return false;
 
     if (dir == RAIL_HORIZONTAL) {
-        if (HasVertical(rail, tileX, tileY - 1) || HasVertical(rail, tileX, tileY + 1)) return;
+        if (HasVertical(rail, tileX, tileY - 1) || HasVertical(rail, tileX, tileY + 1)) return false;
     }
     if (dir == RAIL_VERTICAL) {
-        if (HasHorizontal(rail, tileX - 1, tileY) || HasHorizontal(rail, tileX + 1, tileY)) return;
+        if (HasHorizontal(rail, tileX - 1, tileY) || HasHorizontal(rail, tileX + 1, tileY)) return false;
     }
 
     RailData data;
@@ -721,6 +967,7 @@ void PlaceRail(Rail* rail, int tileX, int tileY, RailDir dir, int owner) {
     data.owner = owner;
     rail->rails.push_back(data);
     UpdateRailNeighbors(rail, tileX, tileY);
+    return true;
 }
 
 void DrawOneRailImage(Rail* rail, Graphics* g, float x, float y, RailDir dir, bool preview) {
@@ -905,10 +1152,13 @@ void UpdateResource(Resource* resource, Player* p1, Player* p2, Rail* rail, floa
     }
 
     if (!resource->active) {
-        if (!HasRailOnResourceSpawn(resource, rail) &&
-            GetTickCount64() - resource->respawnStartTime >= resource->respawnDelay) {
-            resource->pos = resource->spawnPos;
-            resource->active = true;
+        if (GetTickCount64() - resource->respawnStartTime >= resource->respawnDelay) {
+            float newX, newY;
+            if (FindRandomResourcePosition(&newX, &newY)) {
+                resource->pos = { newX, newY };
+                resource->spawnPos = resource->pos;
+                resource->active = true;
+            }
         }
         return;
     }
@@ -943,6 +1193,14 @@ void DrawResource(Resource* resource, Graphics* g) {
 bool CanPlaceResourceAt(float x, float y) {
     float padding = 8.0f;
     float size = 64.0f;
+    RECT resourceRect = {
+        (LONG)x,
+        (LONG)y,
+        (LONG)(x + size),
+        (LONG)(y + size)
+    };
+
+    if (IsRectInsideAnyBase(resourceRect)) return false;
 
     if (IsSolid(&game.map, x + padding, y + padding) ||
         IsSolid(&game.map, x + size - padding, y + padding) ||
@@ -956,42 +1214,61 @@ bool CanPlaceResourceAt(float x, float y) {
     return !HasRail(&game.rail, tileX, tileY);
 }
 
-void CreateResources() {
-    int resourcesPerSide = 50;
+bool FindRandomResourcePosition(float* outX, float* outY, int preferredSide) {
     int centerTileX = MAP_WIDTH / 2;
     int sideStartTileX[2] = { 2, centerTileX + 2 };
     int sideEndTileX[2] = { centerTileX - 3, MAP_WIDTH - 3 };
+
+    for (int attempt = 0; attempt < 5000; attempt++) {
+        int side = (preferredSide == 0 || preferredSide == 1) ? preferredSide : rand() % 2;
+        int width = sideEndTileX[side] - sideStartTileX[side] + 1;
+        int tileX = sideStartTileX[side] + (rand() % width);
+        int tileY = 3 + (rand() % (MAP_HEIGHT - 6));
+        float x = (float)(tileX * TILE_SIZE);
+        float y = (float)(tileY * TILE_SIZE);
+
+        bool samePlace = false;
+        for (int i = 0; i < (int)game.resources.size(); i++) {
+            if (!game.resources[i].active) continue;
+
+            int oldTileX = (int)(game.resources[i].spawnPos.x / TILE_SIZE);
+            int oldTileY = (int)(game.resources[i].spawnPos.y / TILE_SIZE);
+            if (oldTileX == tileX && oldTileY == tileY) {
+                samePlace = true;
+                break;
+            }
+        }
+
+        if (!samePlace && CanPlaceResourceAt(x, y)) {
+            *outX = x;
+            *outY = y;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+void CreateResources() {
+    int resourcesPerSide = 25;
 
     game.resources.clear();
     game.resources.reserve(resourcesPerSide * 2);
 
     for (int side = 0; side < 2; side++) {
         int created = 0;
-        int attempt = 0;
 
-        while (created < resourcesPerSide && attempt < 5000) {
-            int width = sideEndTileX[side] - sideStartTileX[side] + 1;
-            int tileX = sideStartTileX[side] + (rand() % width);
-            int tileY = 3 + (rand() % (MAP_HEIGHT - 6));
-            float x = (float)(tileX * TILE_SIZE);
-            float y = (float)(tileY * TILE_SIZE);
-
-            bool samePlace = false;
-            for (int i = 0; i < (int)game.resources.size(); i++) {
-                int oldTileX = (int)(game.resources[i].spawnPos.x / TILE_SIZE);
-                int oldTileY = (int)(game.resources[i].spawnPos.y / TILE_SIZE);
-                if (oldTileX == tileX && oldTileY == tileY) {
-                    samePlace = true;
-                }
-            }
-
-            if (!samePlace && CanPlaceResourceAt(x, y)) {
+        while (created < resourcesPerSide) {
+            float x, y;
+            if (FindRandomResourcePosition(&x, &y, side)) {
                 Resource resource;
                 InitResource(&resource, (created % 2 == 0) ? RESOURCE_TREE : RESOURCE_ROCK, x, y);
                 game.resources.push_back(resource);
                 created++;
             }
-            attempt++;
+            else {
+                break;
+            }
         }
     }
 }

@@ -1,4 +1,5 @@
 ﻿#include <windows.h>
+#include <mmsystem.h>
 #include <gdiplus.h>
 #include <atlimage.h>
 #include <tchar.h>
@@ -12,6 +13,7 @@
 #include <cmath>
 
 #pragma comment(lib, "gdiplus.lib")
+#pragma comment(lib, "winmm.lib")
 
 using namespace Gdiplus;
 
@@ -25,6 +27,9 @@ using namespace Gdiplus;
 #define BASE_DOOR_HEIGHT_TILES 4
 #define BASE_START_RAIL_TILES 11
 #define RAIL_CRAFT_TIME 1.0f
+#define OBSTACLE_CRAFT_TIME 1.5f
+#define OBSTACLE_WOOD_COST 2
+#define OBSTACLE_STONE_COST 2
 #define PLAYER_COLLISION_LEFT 14
 #define PLAYER_COLLISION_RIGHT 50
 #define PLAYER_COLLISION_TOP 17
@@ -32,6 +37,9 @@ using namespace Gdiplus;
 
 #define MAX_HEAT 100.0f
 #define HEAT_RATE 0.07f
+#define TIMER_ID 1
+#define TARGET_FRAME_MS 16
+#define MAX_FRAME_DELTA 0.05f
 #define marginX 16
 #define marginY 39
 
@@ -68,7 +76,9 @@ struct Player {
     int wood;
     int stone;
     int railCount;
+    int obstacleCount;
     float railCraftProgress;
+    float obstacleCraftProgress;
     DWORD lastFrameTime;
     DWORD frameDelay;
     bool hasBucket;
@@ -85,6 +95,11 @@ struct Rail {
     std::vector<RailData> rails;
     Bitmap* railImage;
     Bitmap* turnImage;
+};
+
+struct Obstacle {
+    int tileX, tileY;
+    int owner;
 };
 
 struct Train {
@@ -124,12 +139,15 @@ struct GameData {
     Train train1, train2;
     Camera cam1, cam2;
     std::vector<Resource> resources;
+    std::vector<Obstacle> obstacles;
     bool gameOver;
     int winner;
     bool rKeyPrev;
     bool twoKeyPrev;
     bool f2KeyPrev;
+    bool f3KeyPrev;
     bool infiniteRailMode;
+    bool infiniteResourceMode;
     HDC memDC;
     HBITMAP memBitmap;
     HBITMAP oldBitmap;
@@ -140,9 +158,13 @@ struct GameData {
     Bucket bucket2; // p2용
     bool fKeyPrev;
     bool threeKeyPrev;
+    bool qKeyPrev;
+    bool zeroKeyPrev;
 };
 Bitmap* g_emptyBucket = nullptr;
 Bitmap* g_fullBucket = nullptr;
+HFONT g_inventoryFont = nullptr;
+SolidBrush* g_overHeatBrush = nullptr;
 HINSTANCE g_hInst;
 LPCTSTR lpszClass = L"Window Class Name";
 LPCTSTR lpszWindowName = L"Unrailed";
@@ -159,11 +181,16 @@ RECT GetPlayerRectAt(Player* p, Vec2 pos);
 bool RectsOverlap(RECT a, RECT b);
 bool IsPlayerInsideBase(Player* p, BaseArea base);
 bool IsBlockedByBaseWall(Player* p, Vec2 nextPos);
+bool IsBlockedByObstacle(Player* p, Vec2 nextPos);
 bool IsRectInsideAnyBase(RECT rc);
 RECT GetRailCraftStationRect(BaseArea base);
+RECT GetObstacleCraftStationRect(BaseArea base);
 bool IsPlayerTouchingRailCraftStation(Player* p);
+bool IsPlayerTouchingObstacleCraftStation(Player* p);
 void UpdateRailCraft(Player* p, float deltaTime);
+void UpdateObstacleCraft(Player* p, float deltaTime);
 void DrawRailCraftStations(Graphics* g, Player* viewer);
+void DrawObstacleCraftStations(Graphics* g, Player* viewer);
 void DrawBase(Graphics* g, BaseArea base, bool viewerInside);
 void DrawBases(Graphics* g, Player* viewer);
 bool IsSolid(MapData* map, float x, float y);
@@ -171,6 +198,7 @@ void InitPlayer(Player* p, int id, float x, float y);
 int GetPlayerFrameCount(Player* p);
 int GetPlayerDirectionRow(Player* p);
 RECT GetPlayerRect(Player* p);
+void GetPlacementTile(Player* p, int* tileX, int* tileY);
 void UpdatePlayer(Player* p, bool up, bool down, bool left, bool right, MapData* map, float deltaTime);
 void DrawPlayer(Player* p, HDC hdc, Camera cam, int offsetY);
 void DrawInventory(Player* p, HDC hdc, Camera cam, int offsetY);
@@ -179,18 +207,25 @@ void ReleaseRail(Rail* rail);
 bool HasHorizontal(Rail* rail, int tileX, int tileY);
 bool HasVertical(Rail* rail, int tileX, int tileY);
 bool HasRail(Rail* rail, int tileX, int tileY);
+bool HasObstacle(int tileX, int tileY);
+bool CanPlaceRailAt(Rail* rail, int tileX, int tileY, RailDir dir);
+bool CanPlaceObstacleAt(int tileX, int tileY);
+bool PlaceObstacle(int tileX, int tileY, int owner);
 void UpdateRailNeighbors(Rail* rail, int tileX, int tileY);
 bool PlaceRail(Rail* rail, int tileX, int tileY, RailDir dir, int owner);
 void DrawOneRailImage(Rail* rail, Graphics* g, float x, float y, RailDir dir, bool preview);
 void DrawRailPreview(Rail* rail, Graphics* g, int x, int y, RailDir dir);
-void DrawRails(Rail* rail, Graphics* g);
+void DrawObstaclePreview(Graphics* g, int x, int y);
+void DrawPlacementPreview(Graphics* g, Player* player, RailDir railDir, Color tileColor);
+void DrawRails(Rail* rail, Graphics* g, Camera cam, int viewW, int viewH);
+void DrawObstacles(Graphics* g, Camera cam, int viewW, int viewH);
 void InitTrain(Train* train, float x, float y, int direction, const wchar_t* imagePath);
 void ReleaseTrain(Train* train);
 bool IsTrainOverheated(Train* train);
 void UpdateTrainDirection(Train* train, RailDir rd);
-void UpdateTrain(Train* train, Rail* rail);
+void UpdateTrain(Train* train, Rail* rail, float deltaTime);
 void DrawHeatBar(Train* train, Graphics* g);
-void DrawTrain(Train* train, Graphics* g);
+void DrawTrain(Train* train, Graphics* g, Camera cam, int viewW, int viewH);
 void InitResource(Resource* resource, ResourceType type, float x, float y);
 RECT GetResourceRect(Resource* resource);
 bool ResourceIntersectsPlayer(Resource* resource, Player* player);
@@ -223,13 +258,22 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
         game.rKeyPrev = false;
         game.twoKeyPrev = false;
         game.f2KeyPrev = false;
+        game.f3KeyPrev = false;
         game.infiniteRailMode = false;
+        game.infiniteResourceMode = false;
         game.selectedDir1 = RAIL_HORIZONTAL;
         game.selectedDir2 = RAIL_HORIZONTAL;
         game.bucket1 = { {400, 400}, false };  // 위치는 조정
         game.bucket2 = { {2400, 1500}, false }; // 위치는 조정
         game.fKeyPrev = false;
         game.threeKeyPrev = false;
+        game.qKeyPrev = false;
+        game.zeroKeyPrev = false;
+        game.obstacles.clear();
+        g_inventoryFont = CreateFontW(18, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
+            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+            DEFAULT_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Arial");
+        g_overHeatBrush = new SolidBrush(Color(120, 255, 0, 0));
 
         InitPlayer(&game.p1, 1, 300, 400);
         InitPlayer(&game.p2, 2, 2500, 1500);
@@ -261,19 +305,19 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
         for (int i = 0; i < BASE_START_RAIL_TILES; i++) PlaceRail(&game.rail, t2X + 2 - i, t2Y, RAIL_HORIZONTAL, 2);
 
         CreateResources();
-        SetTimer(hWnd, 1, 16, NULL);
+        SetTimer(hWnd, TIMER_ID, TARGET_FRAME_MS, NULL);
         return 0;
     }
 
     case WM_TIMER:
     {
-        if (wParam == 1) {
+        if (wParam == TIMER_ID) {
             if (!game.gameOver) {
                 // time
                 ULONGLONG now = GetTickCount64();
                 float deltaTime = (now - game.lastUpdateTime) / 1000.0f;
                 game.lastUpdateTime = now;
-                if (deltaTime > 0.05f) deltaTime = 0.05f;
+                if (deltaTime > MAX_FRAME_DELTA) deltaTime = MAX_FRAME_DELTA;
 
                 // player move
                 UpdatePlayer(&game.p1, GetAsyncKeyState('W'), GetAsyncKeyState('S'), GetAsyncKeyState('A'), GetAsyncKeyState('D'), &game.map, deltaTime);
@@ -285,6 +329,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
                 }
                 UpdateRailCraft(&game.p1, deltaTime);
                 UpdateRailCraft(&game.p2, deltaTime);
+                UpdateObstacleCraft(&game.p1, deltaTime);
+                UpdateObstacleCraft(&game.p2, deltaTime);
 
                 // rail direction change
                 bool rKey = GetAsyncKeyState('R') & 0x8000;
@@ -305,26 +351,51 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
                 }
                 game.f2KeyPrev = f2Key;
 
+                bool f3Key = GetAsyncKeyState(VK_F3) & 0x8000;
+                if (f3Key && !game.f3KeyPrev) {
+                    game.infiniteResourceMode = !game.infiniteResourceMode;
+                }
+                game.f3KeyPrev = f3Key;
+
                 // rail place
                 if (GetAsyncKeyState('E') & 0x8000) {
-                    int tileX = (int)(game.p1.pos.x / TILE_SIZE);
-                    int tileY = (int)(game.p1.pos.y / TILE_SIZE);
-                    if ((game.infiniteRailMode || game.p1.railCount > 0) &&
+                    int tileX, tileY;
+                    GetPlacementTile(&game.p1, &tileX, &tileY);
+                    if ((game.infiniteRailMode || game.infiniteResourceMode || game.p1.railCount > 0) &&
                         PlaceRail(&game.rail, tileX, tileY, game.selectedDir1, 1) &&
-                        !game.infiniteRailMode) {
+                        !game.infiniteRailMode &&
+                        !game.infiniteResourceMode) {
                         game.p1.railCount--;
                     }
                 }
 
                 if ((GetAsyncKeyState(VK_NUMPAD1) & 0x8000) || (GetAsyncKeyState('1') & 0x8000)) {
-                    int tileX = (int)(game.p2.pos.x / TILE_SIZE);
-                    int tileY = (int)(game.p2.pos.y / TILE_SIZE);
-                    if ((game.infiniteRailMode || game.p2.railCount > 0) &&
+                    int tileX, tileY;
+                    GetPlacementTile(&game.p2, &tileX, &tileY);
+                    if ((game.infiniteRailMode || game.infiniteResourceMode || game.p2.railCount > 0) &&
                         PlaceRail(&game.rail, tileX, tileY, game.selectedDir2, 2) &&
-                        !game.infiniteRailMode) {
+                        !game.infiniteRailMode &&
+                        !game.infiniteResourceMode) {
                         game.p2.railCount--;
                     }
                 }
+
+                bool qKey = GetAsyncKeyState('Q') & 0x8000;
+                if (qKey && !game.qKeyPrev && (game.infiniteResourceMode || game.p1.obstacleCount > 0)) {
+                    int tileX, tileY;
+                    GetPlacementTile(&game.p1, &tileX, &tileY);
+                    if (PlaceObstacle(tileX, tileY, 1) && !game.infiniteResourceMode) game.p1.obstacleCount--;
+                }
+                game.qKeyPrev = qKey;
+
+                bool zeroKey = (GetAsyncKeyState('0') & 0x8000) || (GetAsyncKeyState(VK_NUMPAD0) & 0x8000);
+                if (zeroKey && !game.zeroKeyPrev && (game.infiniteResourceMode || game.p2.obstacleCount > 0)) {
+                    int tileX, tileY;
+                    GetPlacementTile(&game.p2, &tileX, &tileY);
+                    if (PlaceObstacle(tileX, tileY, 2) && !game.infiniteResourceMode) game.p2.obstacleCount--;
+                }
+                game.zeroKeyPrev = zeroKey;
+
                 // Player1
                 // Player1 - F키 줍기/놓기
                 bool fKey = GetAsyncKeyState('F') & 0x8000;
@@ -368,7 +439,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
                     RECT tr = { (LONG)game.train1.pos.x, (LONG)game.train1.pos.y,
                                 (LONG)(game.train1.pos.x + 96), (LONG)(game.train1.pos.y + 48) };
                     if (RectsOverlap(pr, tr)) {
-                        game.train1.heat -= 30.0f;
+                        game.train1.heat -= 90.0f;
                         if (game.train1.heat < 0) game.train1.heat = 0;
                         game.p1.bucketFull = false;
                     }
@@ -412,14 +483,14 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
                     RECT tr = { (LONG)game.train2.pos.x, (LONG)game.train2.pos.y,
                                 (LONG)(game.train2.pos.x + 96), (LONG)(game.train2.pos.y + 48) };
                     if (RectsOverlap(pr, tr)) {
-                        game.train2.heat -= 30.0f;
+                        game.train2.heat -= 90.0f;
                         if (game.train2.heat < 0) game.train2.heat = 0;
                         game.p2.bucketFull = false;
                     }
                 }
                 // train move
-                UpdateTrain(&game.train1, &game.rail);
-                UpdateTrain(&game.train2, &game.rail);
+                UpdateTrain(&game.train1, &game.rail, deltaTime);
+                UpdateTrain(&game.train2, &game.rail, deltaTime);
 
                 // win check
                 if (game.train1.finished && !game.train2.finished) { game.gameOver = true; game.winner = 1; }
@@ -464,18 +535,13 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
         g1.TranslateTransform(-game.cam1.x, -game.cam1.y);
         DrawMap(&game.map, &g1, game.cam1, SCREEN_WIDTH, halfH);
 
-        int preX1 = (int)(game.p1.pos.x / TILE_SIZE) * TILE_SIZE;
-        int preY1 = (int)(game.p1.pos.y / TILE_SIZE) * TILE_SIZE;
-        if (game.infiniteRailMode || game.p1.railCount > 0) {
-            SolidBrush previewBrush1(Color(120, 255, 255, 0));
-            g1.FillRectangle(&previewBrush1, (float)preX1, (float)preY1, (float)TILE_SIZE, (float)TILE_SIZE);
-            DrawRailPreview(&game.rail, &g1, preX1, preY1, game.selectedDir1);
-        }
+        DrawPlacementPreview(&g1, &game.p1, game.selectedDir1, Color(120, 255, 255, 0));
 
         for (int i = 0; i < (int)game.resources.size(); i++) DrawResource(&game.resources[i], &g1);
-        DrawRails(&game.rail, &g1);
-        DrawTrain(&game.train1, &g1);
-        DrawTrain(&game.train2, &g1);
+        DrawRails(&game.rail, &g1, game.cam1, SCREEN_WIDTH, halfH);
+        DrawObstacles(&g1, game.cam1, SCREEN_WIDTH, halfH);
+        DrawTrain(&game.train1, &g1, game.cam1, SCREEN_WIDTH, halfH);
+        DrawTrain(&game.train2, &g1, game.cam1, SCREEN_WIDTH, halfH);
         // 바닥에 있는 양동이
         if (!game.bucket1.pickedUp)
             g1.DrawImage(g_emptyBucket, game.bucket1.pos.x, game.bucket1.pos.y, 64.0f, 64.0f);
@@ -487,6 +553,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
         }
         DrawBases(&g1, &game.p1);
         DrawRailCraftStations(&g1, &game.p1);
+        DrawObstacleCraftStations(&g1, &game.p1);
 
         g1.Flush();
         SaveDC(game.memDC);
@@ -504,18 +571,13 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
         g2.TranslateTransform(-game.cam2.x, -game.cam2.y);
         DrawMap(&game.map, &g2, game.cam2, SCREEN_WIDTH, halfH);
 
-        int preX2 = (int)(game.p2.pos.x / TILE_SIZE) * TILE_SIZE;
-        int preY2 = (int)(game.p2.pos.y / TILE_SIZE) * TILE_SIZE;
-        if (game.infiniteRailMode || game.p2.railCount > 0) {
-            SolidBrush previewBrush2(Color(120, 0, 255, 255));
-            g2.FillRectangle(&previewBrush2, (float)preX2, (float)preY2, (float)TILE_SIZE, (float)TILE_SIZE);
-            DrawRailPreview(&game.rail, &g2, preX2, preY2, game.selectedDir2);
-        }
+        DrawPlacementPreview(&g2, &game.p2, game.selectedDir2, Color(120, 0, 255, 255));
 
         for (int i = 0; i < (int)game.resources.size(); i++) DrawResource(&game.resources[i], &g2);
-        DrawRails(&game.rail, &g2);
-        DrawTrain(&game.train1, &g2);
-        DrawTrain(&game.train2, &g2);
+        DrawRails(&game.rail, &g2, game.cam2, SCREEN_WIDTH, halfH);
+        DrawObstacles(&g2, game.cam2, SCREEN_WIDTH, halfH);
+        DrawTrain(&game.train1, &g2, game.cam2, SCREEN_WIDTH, halfH);
+        DrawTrain(&game.train2, &g2, game.cam2, SCREEN_WIDTH, halfH);
         if (!game.bucket2.pickedUp)
             g2.DrawImage(g_emptyBucket, game.bucket2.pos.x, game.bucket2.pos.y, 64.0f, 64.0f);
         if (game.p2.hasBucket) {
@@ -524,6 +586,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
         }
         DrawBases(&g2, &game.p2);
         DrawRailCraftStations(&g2, &game.p2);
+        DrawObstacleCraftStations(&g2, &game.p2);
 
         g2.Flush();
         SaveDC(game.memDC);
@@ -563,7 +626,13 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
         DeleteDC(game.memDC);
         delete g_emptyBucket;
         delete g_fullBucket;
-        KillTimer(hWnd, 1);
+        if (g_inventoryFont) {
+            DeleteObject(g_inventoryFont);
+            g_inventoryFont = nullptr;
+        }
+        delete g_overHeatBrush;
+        g_overHeatBrush = nullptr;
+        KillTimer(hWnd, TIMER_ID);
         PostQuitMessage(0);
         return 0;
     }
@@ -578,6 +647,7 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
     WNDCLASSEX WndClass;
     g_hInst = hInstance;
     srand((unsigned int)time(NULL));
+    timeBeginPeriod(1);
 
     GdiplusStartupInput gdiplusStartupInput;
     GdiplusStartup(&g_gdiplusToken, &gdiplusStartupInput, NULL);
@@ -609,6 +679,7 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
     }
 
     GdiplusShutdown(g_gdiplusToken);
+    timeEndPeriod(1);
     return (int)Message.wParam;
 }
 
@@ -774,6 +845,23 @@ bool IsBlockedByBaseWall(Player* p, Vec2 nextPos) {
     return false;
 }
 
+bool IsBlockedByObstacle(Player* p, Vec2 nextPos) {
+    RECT playerRect = GetPlayerRectAt(p, nextPos);
+
+    for (int i = 0; i < (int)game.obstacles.size(); i++) {
+        RECT obstacleRect = {
+            game.obstacles[i].tileX * TILE_SIZE,
+            game.obstacles[i].tileY * TILE_SIZE,
+            game.obstacles[i].tileX * TILE_SIZE + TILE_SIZE,
+            game.obstacles[i].tileY * TILE_SIZE + TILE_SIZE
+        };
+
+        if (RectsOverlap(playerRect, obstacleRect)) return true;
+    }
+
+    return false;
+}
+
 bool IsRectInsideAnyBase(RECT rc) {
     for (int i = 0; i < 2; i++) {
         BaseArea base = GetBaseArea(i);
@@ -790,6 +878,12 @@ RECT GetRailCraftStationRect(BaseArea base) {
     return { stationX, stationY, stationX + TILE_SIZE, stationY + TILE_SIZE };
 }
 
+RECT GetObstacleCraftStationRect(BaseArea base) {
+    int stationX = base.doorOnRight ? base.x + 2 * TILE_SIZE : base.x + base.w - 3 * TILE_SIZE;
+    int stationY = base.y + 4 * TILE_SIZE;
+    return { stationX, stationY, stationX + TILE_SIZE, stationY + TILE_SIZE };
+}
+
 bool IsPlayerTouchingRailCraftStation(Player* p) {
     RECT playerRect = GetPlayerRect(p);
 
@@ -801,8 +895,20 @@ bool IsPlayerTouchingRailCraftStation(Player* p) {
     return false;
 }
 
+bool IsPlayerTouchingObstacleCraftStation(Player* p) {
+    RECT playerRect = GetPlayerRect(p);
+
+    for (int i = 0; i < 2; i++) {
+        RECT stationRect = GetObstacleCraftStationRect(GetBaseArea(i));
+        if (RectsOverlap(playerRect, stationRect)) return true;
+    }
+
+    return false;
+}
+
 void UpdateRailCraft(Player* p, float deltaTime) {
-    if (!IsPlayerTouchingRailCraftStation(p) || p->wood <= 0 || p->stone <= 0) {
+    if (!IsPlayerTouchingRailCraftStation(p) ||
+        (!game.infiniteResourceMode && (p->wood <= 0 || p->stone <= 0))) {
         p->railCraftProgress = 0.0f;
         return;
     }
@@ -810,8 +916,10 @@ void UpdateRailCraft(Player* p, float deltaTime) {
     p->railCraftProgress += deltaTime;
 
     if (p->railCraftProgress >= RAIL_CRAFT_TIME) {
-        p->wood--;
-        p->stone--;
+        if (!game.infiniteResourceMode) {
+            p->wood--;
+            p->stone--;
+        }
         p->railCount++;
         p->railCraftProgress = 0.0f;
         if (p->hasBucket) {
@@ -828,6 +936,27 @@ void UpdateRailCraft(Player* p, float deltaTime) {
                 game.bucket2.pos = game.p2.pos;
             }
         }
+    }
+}
+
+void UpdateObstacleCraft(Player* p, float deltaTime) {
+    if (!IsPlayerTouchingObstacleCraftStation(p) ||
+        (!game.infiniteResourceMode &&
+            (p->wood < OBSTACLE_WOOD_COST ||
+             p->stone < OBSTACLE_STONE_COST))) {
+        p->obstacleCraftProgress = 0.0f;
+        return;
+    }
+
+    p->obstacleCraftProgress += deltaTime;
+
+    if (p->obstacleCraftProgress >= OBSTACLE_CRAFT_TIME) {
+        if (!game.infiniteResourceMode) {
+            p->wood -= OBSTACLE_WOOD_COST;
+            p->stone -= OBSTACLE_STONE_COST;
+        }
+        p->obstacleCount++;
+        p->obstacleCraftProgress = 0.0f;
     }
 }
 
@@ -852,6 +981,35 @@ void DrawRailCraftStations(Graphics* g, Player* viewer) {
 
             SolidBrush bgBrush(Color(255, 0, 0, 0));
             SolidBrush fillBrush(Color(255, 255, 210, 40));
+            g->FillRectangle(&bgBrush, (float)rc.left, (float)(rc.top - 10), (float)TILE_SIZE, 6.0f);
+            g->FillRectangle(&fillBrush, (float)rc.left, (float)(rc.top - 10), (float)TILE_SIZE * ratio, 6.0f);
+        }
+    }
+}
+
+void DrawObstacleCraftStations(Graphics* g, Player* viewer) {
+    for (int i = 0; i < 2; i++) {
+        BaseArea base = GetBaseArea(i);
+        if (!IsPlayerInsideBase(viewer, base)) continue;
+
+        RECT rc = GetObstacleCraftStationRect(base);
+        SolidBrush tableBrush(Color(255, 105, 70, 42));
+        Pen tableEdge(Color(255, 55, 35, 22), 2.0f);
+        SolidBrush stoneBrush(Color(255, 95, 98, 105));
+        SolidBrush woodBrush(Color(255, 130, 78, 34));
+
+        g->FillRectangle(&tableBrush, rc.left, rc.top, TILE_SIZE, TILE_SIZE);
+        g->DrawRectangle(&tableEdge, rc.left, rc.top, TILE_SIZE, TILE_SIZE);
+        g->FillRectangle(&woodBrush, rc.left + 7, rc.top + 18, 18, 8);
+        g->FillEllipse(&stoneBrush, rc.left + 16, rc.top + 7, 11, 11);
+        g->FillEllipse(&stoneBrush, rc.left + 6, rc.top + 8, 12, 12);
+
+        if (RectsOverlap(GetPlayerRect(viewer), rc) && viewer->obstacleCraftProgress > 0.0f) {
+            float ratio = viewer->obstacleCraftProgress / OBSTACLE_CRAFT_TIME;
+            if (ratio > 1.0f) ratio = 1.0f;
+
+            SolidBrush bgBrush(Color(255, 0, 0, 0));
+            SolidBrush fillBrush(Color(255, 255, 120, 70));
             g->FillRectangle(&bgBrush, (float)rc.left, (float)(rc.top - 10), (float)TILE_SIZE, 6.0f);
             g->FillRectangle(&fillBrush, (float)rc.left, (float)(rc.top - 10), (float)TILE_SIZE * ratio, 6.0f);
         }
@@ -916,7 +1074,9 @@ void InitPlayer(Player* p, int id, float x, float y) {
     p->wood = 0;
     p->stone = 0;
     p->railCount = 0;
+    p->obstacleCount = 0;
     p->railCraftProgress = 0.0f;
+    p->obstacleCraftProgress = 0.0f;
     p->lastFrameTime = GetTickCount();
     p->frameDelay = 120;
     p->hasBucket = false;
@@ -947,6 +1107,16 @@ RECT GetPlayerRect(Player* p) {
     return GetPlayerRectAt(p, p->pos);
 }
 
+void GetPlacementTile(Player* p, int* tileX, int* tileY) {
+    *tileX = (int)((p->pos.x + p->size / 2.0f) / TILE_SIZE);
+    *tileY = (int)((p->pos.y + p->size / 2.0f) / TILE_SIZE);
+
+    if (p->dir == DIR_LEFT) (*tileX)--;
+    else if (p->dir == DIR_RIGHT) (*tileX)++;
+    else if (p->dir == DIR_UP) (*tileY)--;
+    else if (p->dir == DIR_DOWN) (*tileY)++;
+}
+
 void UpdatePlayer(Player* p, bool up, bool down, bool left, bool right, MapData* map, float deltaTime) {
     Vec2 nextPos = p->pos;
     p->isMoving = false;
@@ -972,7 +1142,8 @@ void UpdatePlayer(Player* p, bool up, bool down, bool left, bool right, MapData*
         IsSolid(map, (float)(nextRect.right - 1), (float)nextRect.top) ||
         IsSolid(map, (float)nextRect.left, (float)(nextRect.bottom - 1)) ||
         IsSolid(map, (float)(nextRect.right - 1), (float)(nextRect.bottom - 1)) ||
-        IsBlockedByBaseWall(p, nextPos)) {
+        IsBlockedByBaseWall(p, nextPos) ||
+        IsBlockedByObstacle(p, nextPos)) {
         collision = true;
     }
 
@@ -1009,23 +1180,30 @@ void DrawInventory(Player* p, HDC hdc, Camera cam, int offsetY) {
     int x = (int)(p->pos.x - cam.x);
     int y = (int)(p->pos.y - cam.y) + offsetY;
 
-    wchar_t text[64];
-    if(p->railCount>0)
-        swprintf_s(text, L"나무:%d / 돌:%d / 레일:%d", p->wood, p->stone, p->railCount);
-    else
+    wchar_t text[128];
+    if (game.infiniteResourceMode) {
+        swprintf_s(text, L"나무:∞ / 돌:∞ / 레일:∞ / 장애물:∞");
+    }
+    else if (game.infiniteRailMode) {
+        swprintf_s(text, L"나무:%d / 돌:%d / 레일:∞ / 장애물:%d", p->wood, p->stone, p->obstacleCount);
+    }
+    else if (p->railCount > 0 || p->obstacleCount > 0) {
+        swprintf_s(text, L"나무:%d / 돌:%d / 레일:%d / 장애물:%d", p->wood, p->stone, p->railCount, p->obstacleCount);
+    }
+    else {
         swprintf_s(text, L"나무:%d / 돌:%d", p->wood, p->stone);
+    }
 
     int oldBkMode = SetBkMode(hdc, TRANSPARENT);
     COLORREF oldColor = SetTextColor(hdc, RGB(0, 0, 0));
-    HFONT font = CreateFontW(18, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
-        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-        DEFAULT_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Arial");
-    HFONT oldFont = (HFONT)SelectObject(hdc, font);
+    HFONT oldFont = nullptr;
+    if (g_inventoryFont) {
+        oldFont = (HFONT)SelectObject(hdc, g_inventoryFont);
+    }
 
     TextOutW(hdc, x, y, text, (int)wcslen(text));
 
-    SelectObject(hdc, oldFont);
-    DeleteObject(font);
+    if (oldFont) SelectObject(hdc, oldFont);
     SetTextColor(hdc, oldColor);
     SetBkMode(hdc, oldBkMode);
 }
@@ -1062,6 +1240,54 @@ bool HasRail(Rail* rail, int tileX, int tileY) {
         if (rail->rails[i].tileX == tileX && rail->rails[i].tileY == tileY) return true;
     }
     return false;
+}
+
+bool HasObstacle(int tileX, int tileY) {
+    for (int i = 0; i < (int)game.obstacles.size(); i++) {
+        if (game.obstacles[i].tileX == tileX && game.obstacles[i].tileY == tileY) return true;
+    }
+    return false;
+}
+
+bool CanPlaceRailAt(Rail* rail, int tileX, int tileY, RailDir dir) {
+    if (tileX < 0 || tileY < 0 || tileX >= MAP_WIDTH || tileY >= MAP_HEIGHT) return false;
+    if (HasRail(rail, tileX, tileY) || HasObstacle(tileX, tileY)) return false;
+
+    if (dir == RAIL_HORIZONTAL) {
+        if (HasVertical(rail, tileX, tileY - 1) || HasVertical(rail, tileX, tileY + 1)) return false;
+    }
+    if (dir == RAIL_VERTICAL) {
+        if (HasHorizontal(rail, tileX - 1, tileY) || HasHorizontal(rail, tileX + 1, tileY)) return false;
+    }
+
+    return true;
+}
+
+bool CanPlaceObstacleAt(int tileX, int tileY) {
+    if (tileX < 0 || tileY < 0 || tileX >= MAP_WIDTH || tileY >= MAP_HEIGHT) return false;
+    if (HasRail(&game.rail, tileX, tileY) || HasObstacle(tileX, tileY)) return false;
+
+    float x = (float)(tileX * TILE_SIZE);
+    float y = (float)(tileY * TILE_SIZE);
+    if (IsSolid(&game.map, x + 4.0f, y + 4.0f) ||
+        IsSolid(&game.map, x + TILE_SIZE - 4.0f, y + 4.0f) ||
+        IsSolid(&game.map, x + 4.0f, y + TILE_SIZE - 4.0f) ||
+        IsSolid(&game.map, x + TILE_SIZE - 4.0f, y + TILE_SIZE - 4.0f)) {
+        return false;
+    }
+
+    return true;
+}
+
+bool PlaceObstacle(int tileX, int tileY, int owner) {
+    if (!CanPlaceObstacleAt(tileX, tileY)) return false;
+
+    Obstacle obstacle;
+    obstacle.tileX = tileX;
+    obstacle.tileY = tileY;
+    obstacle.owner = owner;
+    game.obstacles.push_back(obstacle);
+    return true;
 }
 
 RailDir GetRailDir(Rail* rail, int tileX, int tileY) {
@@ -1103,14 +1329,7 @@ void UpdateRailNeighbors(Rail* rail, int tileX, int tileY) {
 }
 
 bool PlaceRail(Rail* rail, int tileX, int tileY, RailDir dir, int owner) {
-    if (HasRail(rail, tileX, tileY)) return false;
-
-    if (dir == RAIL_HORIZONTAL) {
-        if (HasVertical(rail, tileX, tileY - 1) || HasVertical(rail, tileX, tileY + 1)) return false;
-    }
-    if (dir == RAIL_VERTICAL) {
-        if (HasHorizontal(rail, tileX - 1, tileY) || HasHorizontal(rail, tileX + 1, tileY)) return false;
-    }
+    if (!CanPlaceRailAt(rail, tileX, tileY, dir)) return false;
 
     RailData data;
     data.tileX = tileX;
@@ -1152,11 +1371,77 @@ void DrawRailPreview(Rail* rail, Graphics* g, int x, int y, RailDir dir) {
     DrawOneRailImage(rail, g, (float)x, (float)y, dir, true);
 }
 
-void DrawRails(Rail* rail, Graphics* g) {
+void DrawObstaclePreview(Graphics* g, int x, int y) {
+    SolidBrush body(Color(150, 92, 66, 46));
+    SolidBrush highlight(Color(150, 140, 96, 58));
+    Pen edge(Color(180, 40, 28, 20), 2.0f);
+
+    g->FillRectangle(&body, (float)x, (float)y, (float)TILE_SIZE, (float)TILE_SIZE);
+    g->FillRectangle(&highlight, (float)x + 5.0f, (float)y + 7.0f, (float)TILE_SIZE - 10.0f, 6.0f);
+    g->FillRectangle(&highlight, (float)x + 5.0f, (float)y + 20.0f, (float)TILE_SIZE - 10.0f, 5.0f);
+    g->DrawRectangle(&edge, (float)x, (float)y, (float)TILE_SIZE, (float)TILE_SIZE);
+}
+
+void DrawPlacementPreview(Graphics* g, Player* player, RailDir railDir, Color tileColor) {
+    int tileX, tileY;
+    GetPlacementTile(player, &tileX, &tileY);
+    int preX = tileX * TILE_SIZE;
+    int preY = tileY * TILE_SIZE;
+
+    bool hasRailItem = game.infiniteRailMode || game.infiniteResourceMode || player->railCount > 0;
+    bool hasObstacleItem = game.infiniteResourceMode || player->obstacleCount > 0;
+    bool canPlaceRail = hasRailItem && CanPlaceRailAt(&game.rail, tileX, tileY, railDir);
+    bool canPlaceObstacle = hasObstacleItem && CanPlaceObstacleAt(tileX, tileY);
+
+    if (!canPlaceRail && !canPlaceObstacle) return;
+
+    bool showRail = canPlaceRail;
+    if (canPlaceRail && canPlaceObstacle) {
+        showRail = ((GetTickCount64() / 500) % 2) == 0;
+    }
+
+    SolidBrush previewBrush(showRail ? tileColor : Color(120, 255, 130, 70));
+    g->FillRectangle(&previewBrush, (float)preX, (float)preY, (float)TILE_SIZE, (float)TILE_SIZE);
+
+    if (showRail) DrawRailPreview(&game.rail, g, preX, preY, railDir);
+    else DrawObstaclePreview(g, preX, preY);
+}
+
+void DrawRails(Rail* rail, Graphics* g, Camera cam, int viewW, int viewH) {
+    const float left = cam.x - TILE_SIZE;
+    const float top = cam.y - TILE_SIZE;
+    const float right = cam.x + viewW + TILE_SIZE;
+    const float bottom = cam.y + viewH + TILE_SIZE;
+
     for (int i = 0; i < (int)rail->rails.size(); i++) {
         float x = (float)(rail->rails[i].tileX * TILE_SIZE);
         float y = (float)(rail->rails[i].tileY * TILE_SIZE);
+
+        if (x > right || x + TILE_SIZE < left || y > bottom || y + TILE_SIZE < top) continue;
         DrawOneRailImage(rail, g, x, y, rail->rails[i].dir, false);
+    }
+}
+
+void DrawObstacles(Graphics* g, Camera cam, int viewW, int viewH) {
+    const float left = cam.x - TILE_SIZE;
+    const float top = cam.y - TILE_SIZE;
+    const float right = cam.x + viewW + TILE_SIZE;
+    const float bottom = cam.y + viewH + TILE_SIZE;
+
+    SolidBrush body(Color(255, 92, 66, 46));
+    SolidBrush highlight(Color(255, 140, 96, 58));
+    Pen edge(Color(255, 40, 28, 20), 2.0f);
+
+    for (int i = 0; i < (int)game.obstacles.size(); i++) {
+        float x = (float)(game.obstacles[i].tileX * TILE_SIZE);
+        float y = (float)(game.obstacles[i].tileY * TILE_SIZE);
+
+        if (x > right || x + TILE_SIZE < left || y > bottom || y + TILE_SIZE < top) continue;
+
+        g->FillRectangle(&body, x, y, (float)TILE_SIZE, (float)TILE_SIZE);
+        g->FillRectangle(&highlight, x + 5.0f, y + 7.0f, (float)TILE_SIZE - 10.0f, 6.0f);
+        g->FillRectangle(&highlight, x + 5.0f, y + 20.0f, (float)TILE_SIZE - 10.0f, 5.0f);
+        g->DrawRectangle(&edge, x, y, (float)TILE_SIZE, (float)TILE_SIZE);
     }
 }
 
@@ -1201,28 +1486,35 @@ void UpdateTrainDirection(Train* train, RailDir rd) {
     }
 }
 
-void UpdateTrain(Train* train, Rail* rail) {
+void UpdateTrain(Train* train, Rail* rail, float deltaTime) {
+    if (game.gameOver) return;
     if (train->finished) return;
 
-    ULONGLONG now = GetTickCount64();
-    float delta = (now - train->lastTime) / 1000.0f;
-    train->lastTime = now;
-
-    if (!IsTrainOverheated(train)) {
-        int tileX = (int)((train->pos.x + 48) / TILE_SIZE);
-        int tileY = (int)((train->pos.y + 24) / TILE_SIZE);
-
-        if (HasRail(rail, tileX, tileY)) {
-            UpdateTrainDirection(train, GetRailDir(rail, tileX, tileY));
-            train->pos.x += train->speed * train->dirX * delta;
-            train->pos.y += train->speed * train->dirY * delta;
-        }
-        else {
-            train->finished = true;
-        }
+    if (IsTrainOverheated(train)) {
+        train->heat = MAX_HEAT;
+        return;
     }
 
-    train->heat += HEAT_RATE;
+    int tileX = (int)((train->pos.x + 48) / TILE_SIZE);
+    int tileY = (int)((train->pos.y + 24) / TILE_SIZE);
+
+    if (HasObstacle(tileX, tileY)) {
+        train->finished = true;
+        game.gameOver = true;
+        game.winner = (train == &game.train1) ? 1 : 2;
+        return;
+    }
+
+    if (HasRail(rail, tileX, tileY)) {
+        UpdateTrainDirection(train, GetRailDir(rail, tileX, tileY));
+        train->pos.x += train->speed * train->dirX * deltaTime;
+        train->pos.y += train->speed * train->dirY * deltaTime;
+    }
+    else {
+        train->finished = true;
+    }
+
+    train->heat += HEAT_RATE * deltaTime * 60.0f;
     if (train->heat > MAX_HEAT) train->heat = MAX_HEAT;
 }
 
@@ -1237,12 +1529,19 @@ void DrawHeatBar(Train* train, Graphics* g) {
     g->FillRectangle(&heatBrush, train->pos.x, train->pos.y - 14.0f, 96.0f * ratio, 8.0f);
 }
 
-void DrawTrain(Train* train, Graphics* g) {
+void DrawTrain(Train* train, Graphics* g, Camera cam, int viewW, int viewH) {
+    const float padding = 120.0f;
+    if (train->pos.x > cam.x + viewW + padding ||
+        train->pos.x + 96.0f < cam.x - padding ||
+        train->pos.y > cam.y + viewH + padding ||
+        train->pos.y + 48.0f < cam.y - padding) {
+        return;
+    }
+
     g->DrawImage(train->image, train->pos.x, train->pos.y, 96.0f, 48.0f);
 
-    if (IsTrainOverheated(train)) {
-        SolidBrush overHeatBrush(Color(120, 255, 0, 0));
-        g->FillRectangle(&overHeatBrush, train->pos.x, train->pos.y, 96.0f, 48.0f);
+    if (IsTrainOverheated(train) && g_overHeatBrush) {
+        g->FillRectangle(g_overHeatBrush, train->pos.x, train->pos.y, 96.0f, 48.0f);
     }
 
     DrawHeatBar(train, g);
@@ -1363,7 +1662,7 @@ bool CanPlaceResourceAt(float x, float y) {
 
     int tileX = (int)((x + size / 2.0f) / TILE_SIZE);
     int tileY = (int)((y + size / 2.0f) / TILE_SIZE);
-    return !HasRail(&game.rail, tileX, tileY);
+    return !HasRail(&game.rail, tileX, tileY) && !HasObstacle(tileX, tileY);
 }
 
 bool FindRandomResourcePosition(float* outX, float* outY, int preferredSide) {

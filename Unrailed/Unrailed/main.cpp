@@ -52,6 +52,7 @@ struct MapData {
     Bitmap* image;
     std::vector<unsigned char> solidBits;
     int pixelW, pixelH;
+    std::vector<unsigned char> waterBits;
 };
 
 struct Player {
@@ -70,6 +71,8 @@ struct Player {
     float railCraftProgress;
     DWORD lastFrameTime;
     DWORD frameDelay;
+    bool hasBucket;
+    bool bucketFull;
 };
 
 struct RailData {
@@ -93,7 +96,10 @@ struct Train {
     ULONGLONG lastTime;
     Bitmap* image;
 };
-
+struct Bucket {
+    Vec2 pos;
+    bool pickedUp;
+};
 struct Resource {
     ResourceType type;
     Vec2 pos;
@@ -130,8 +136,13 @@ struct GameData {
     ULONGLONG lastUpdateTime;
     RailDir selectedDir1;
     RailDir selectedDir2;
+    Bucket bucket1; // p1용
+    Bucket bucket2; // p2용
+    bool fKeyPrev;
+    bool threeKeyPrev;
 };
-
+Bitmap* g_emptyBucket = nullptr;
+Bitmap* g_fullBucket = nullptr;
 HINSTANCE g_hInst;
 LPCTSTR lpszClass = L"Window Class Name";
 LPCTSTR lpszWindowName = L"Unrailed";
@@ -192,7 +203,12 @@ bool CanPlaceResourceAt(float x, float y);
 bool FindRandomResourcePosition(float* outX, float* outY, int preferredSide = -1);
 void CreateResources();
 void DrawVictoryScreen(Graphics* g);
-
+bool IsWater(MapData* map, float x, float y) {
+    if (x < 0 || y < 0 || x >= map->pixelW || y >= map->pixelH) return false;
+    if (map->waterBits.empty()) return false;
+    int index = (int)y * map->pixelW + (int)x;
+    return (map->waterBits[index / 8] & (1 << (index % 8))) != 0;
+}
 LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) {
     PAINTSTRUCT ps;
     HDC hDC;
@@ -210,13 +226,18 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
         game.infiniteRailMode = false;
         game.selectedDir1 = RAIL_HORIZONTAL;
         game.selectedDir2 = RAIL_HORIZONTAL;
+        game.bucket1 = { {400, 400}, false };  // 위치는 조정
+        game.bucket2 = { {2400, 1500}, false }; // 위치는 조정
+        game.fKeyPrev = false;
+        game.threeKeyPrev = false;
 
         InitPlayer(&game.p1, 1, 300, 400);
         InitPlayer(&game.p2, 2, 2500, 1500);
         InitMap(&game.map);
         LoadMapCsv(&game.map, L"Image\\Map\\unTiled map_Tile Layer 1.csv");
         InitRail(&game.rail);
-
+        g_emptyBucket = new Bitmap(L"Image\\train\\bucket.png");  // 경로 채워줘
+        g_fullBucket = new Bitmap(L"Image\\train\\waterbucket.png");  // 경로 채워줘
         HDC hdc = GetDC(hWnd);
         game.memDC = CreateCompatibleDC(hdc);
         game.memBitmap = CreateCompatibleBitmap(hdc, SCREEN_WIDTH, SCREEN_HEIGHT);
@@ -304,7 +325,98 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
                         game.p2.railCount--;
                     }
                 }
+                // Player1
+                // Player1 - F키 줍기/놓기
+                bool fKey = GetAsyncKeyState('F') & 0x8000;
+                if (fKey && !game.fKeyPrev) {
+                    if (!game.p1.hasBucket && !game.bucket1.pickedUp) {
+                        RECT pr = GetPlayerRect(&game.p1);
+                        RECT br = { (LONG)game.bucket1.pos.x, (LONG)game.bucket1.pos.y,
+                                    (LONG)(game.bucket1.pos.x + 64), (LONG)(game.bucket1.pos.y + 64) };
+                        if (RectsOverlap(pr, br)) {
+                            game.bucket1.pickedUp = true;
+                            game.p1.hasBucket = true;
+                        }
+                    }
+                    else if (game.p1.hasBucket) {
+                        game.p1.hasBucket = false;
+                        game.p1.bucketFull = false;
+                        game.bucket1.pickedUp = false;
+                        game.bucket1.pos = game.p1.pos;
+                    }
+                }
+                game.fKeyPrev = fKey;
 
+
+               
+                // Player1 물 채우기
+                if (game.p1.hasBucket && !game.p1.bucketFull) {
+                    RECT pr = GetPlayerRect(&game.p1);
+                    int margin = 10; // 물가 감지 여유
+                    if (IsWater(&game.map, (float)(pr.left - margin), (float)pr.top) ||
+                        IsWater(&game.map, (float)(pr.right + margin), (float)pr.top) ||
+                        IsWater(&game.map, (float)pr.left, (float)(pr.top - margin)) ||
+                        IsWater(&game.map, (float)pr.left, (float)(pr.bottom + margin)) ||
+                        IsWater(&game.map, (float)(pr.right + margin), (float)pr.bottom) ||
+                        IsWater(&game.map, (float)pr.right, (float)(pr.bottom + margin)))
+                        game.p1.bucketFull = true;
+                }
+
+                
+                if (game.p1.hasBucket && game.p1.bucketFull) {
+                    RECT pr = GetPlayerRect(&game.p1);
+                    RECT tr = { (LONG)game.train1.pos.x, (LONG)game.train1.pos.y,
+                                (LONG)(game.train1.pos.x + 96), (LONG)(game.train1.pos.y + 48) };
+                    if (RectsOverlap(pr, tr)) {
+                        game.train1.heat -= 30.0f;
+                        if (game.train1.heat < 0) game.train1.heat = 0;
+                        game.p1.bucketFull = false;
+                    }
+                }
+
+                // Player2
+               // Player2 - 3키 줍기/놓기
+                bool threeKey = (GetAsyncKeyState('3') & 0x8000) || (GetAsyncKeyState(VK_NUMPAD3) & 0x8000);
+                if (threeKey && !game.threeKeyPrev) {
+                    if (!game.p2.hasBucket && !game.bucket2.pickedUp) {
+                        RECT pr = GetPlayerRect(&game.p2);
+                        RECT br = { (LONG)game.bucket2.pos.x, (LONG)game.bucket2.pos.y,
+                                    (LONG)(game.bucket2.pos.x + 64), (LONG)(game.bucket2.pos.y + 64) };
+                        if (RectsOverlap(pr, br)) {
+                            game.bucket2.pickedUp = true;
+                            game.p2.hasBucket = true;
+                        }
+                    }
+                    else if (game.p2.hasBucket) {
+                        game.p2.hasBucket = false;
+                        game.p2.bucketFull = false;
+                        game.bucket2.pickedUp = false;
+                        game.bucket2.pos = game.p2.pos;
+                    }
+                }
+                game.threeKeyPrev = threeKey;
+                // Player2 물 채우기
+                if (game.p2.hasBucket && !game.p2.bucketFull) {
+                    RECT pr = GetPlayerRect(&game.p2);
+                    int margin = 10;
+                    if (IsWater(&game.map, (float)(pr.left - margin), (float)pr.top) ||
+                        IsWater(&game.map, (float)(pr.right + margin), (float)pr.top) ||
+                        IsWater(&game.map, (float)pr.left, (float)(pr.top - margin)) ||
+                        IsWater(&game.map, (float)pr.left, (float)(pr.bottom + margin)) ||
+                        IsWater(&game.map, (float)(pr.right + margin), (float)pr.bottom) ||
+                        IsWater(&game.map, (float)pr.right, (float)(pr.bottom + margin)))
+                        game.p2.bucketFull = true;
+                }
+                if (game.p2.hasBucket && game.p2.bucketFull) {
+                    RECT pr = GetPlayerRect(&game.p2);
+                    RECT tr = { (LONG)game.train2.pos.x, (LONG)game.train2.pos.y,
+                                (LONG)(game.train2.pos.x + 96), (LONG)(game.train2.pos.y + 48) };
+                    if (RectsOverlap(pr, tr)) {
+                        game.train2.heat -= 30.0f;
+                        if (game.train2.heat < 0) game.train2.heat = 0;
+                        game.p2.bucketFull = false;
+                    }
+                }
                 // train move
                 UpdateTrain(&game.train1, &game.rail);
                 UpdateTrain(&game.train2, &game.rail);
@@ -329,6 +441,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
                 if (game.cam2.y < 0) game.cam2.y = 0;
                 if (game.cam2.x > MAP_WIDTH * TILE_SIZE - SCREEN_WIDTH) game.cam2.x = (float)(MAP_WIDTH * TILE_SIZE - SCREEN_WIDTH);
                 if (game.cam2.y > MAP_HEIGHT * TILE_SIZE - halfH) game.cam2.y = (float)(MAP_HEIGHT * TILE_SIZE - halfH);
+
             }
 
             InvalidateRect(hWnd, NULL, FALSE);
@@ -363,6 +476,15 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
         DrawRails(&game.rail, &g1);
         DrawTrain(&game.train1, &g1);
         DrawTrain(&game.train2, &g1);
+        // 바닥에 있는 양동이
+        if (!game.bucket1.pickedUp)
+            g1.DrawImage(g_emptyBucket, game.bucket1.pos.x, game.bucket1.pos.y, 64.0f, 64.0f);
+
+        // 플레이어가 든 양동이
+        if (game.p1.hasBucket) {
+            Bitmap* img = game.p1.bucketFull ? g_fullBucket : g_emptyBucket;
+            g1.DrawImage(img, game.p1.pos.x + 20, game.p1.pos.y + 10, 48.0f, 48.0f);
+        }
         DrawBases(&g1, &game.p1);
         DrawRailCraftStations(&g1, &game.p1);
 
@@ -394,6 +516,12 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
         DrawRails(&game.rail, &g2);
         DrawTrain(&game.train1, &g2);
         DrawTrain(&game.train2, &g2);
+        if (!game.bucket2.pickedUp)
+            g2.DrawImage(g_emptyBucket, game.bucket2.pos.x, game.bucket2.pos.y, 64.0f, 64.0f);
+        if (game.p2.hasBucket) {
+            Bitmap* img = game.p2.bucketFull ? g_fullBucket : g_emptyBucket;
+            g2.DrawImage(img, game.p2.pos.x + 20, game.p2.pos.y + 10, 48.0f, 48.0f);
+        }
         DrawBases(&g2, &game.p2);
         DrawRailCraftStations(&g2, &game.p2);
 
@@ -433,7 +561,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
         SelectObject(game.memDC, game.oldBitmap);
         DeleteObject(game.memBitmap);
         DeleteDC(game.memDC);
-
+        delete g_emptyBucket;
+        delete g_fullBucket;
         KillTimer(hWnd, 1);
         PostQuitMessage(0);
         return 0;
@@ -490,6 +619,7 @@ void BuildCollisionCache(MapData* map) {
     map->pixelH = map->image->GetHeight();
     int pixelCount = map->pixelW * map->pixelH;
     map->solidBits.assign((pixelCount + 7) / 8, 0);
+    map->waterBits.assign((pixelCount + 7) / 8, 0);  // ← 여기
 
     Rect rect(0, 0, map->pixelW, map->pixelH);
     BitmapData data;
@@ -501,11 +631,16 @@ void BuildCollisionCache(MapData* map) {
             BYTE b = row[x * 4 + 0];
             BYTE g = row[x * 4 + 1];
             BYTE r = row[x * 4 + 2];
+
+            int index = y * map->pixelW + x;
+
             bool isGreen = (g > 80 && g > r && g > b);
-            if (!isGreen) {
-                int index = y * map->pixelW + x;
+            if (!isGreen)
                 map->solidBits[index / 8] |= (1 << (index % 8));
-            }
+
+            bool isBlue = (b > 100 && b > r && b > g);  // ← 루프 안으로
+            if (isBlue)
+                map->waterBits[index / 8] |= (1 << (index % 8));
         }
     }
 
@@ -531,6 +666,7 @@ void ReleaseMap(MapData* map) {
     delete map->image;
     map->image = nullptr;
     map->solidBits.clear();
+    map->waterBits.clear();
 }
 
 void LoadMapCsv(MapData* map, const std::wstring& csvPath) {
@@ -672,11 +808,26 @@ void UpdateRailCraft(Player* p, float deltaTime) {
     }
 
     p->railCraftProgress += deltaTime;
+
     if (p->railCraftProgress >= RAIL_CRAFT_TIME) {
         p->wood--;
         p->stone--;
         p->railCount++;
         p->railCraftProgress = 0.0f;
+        if (p->hasBucket) {
+            if (p->id == 1) {
+                game.p1.hasBucket = false;
+                game.p1.bucketFull = false;
+                game.bucket1.pickedUp = false;
+                game.bucket1.pos = game.p1.pos;
+            }
+            else {
+                game.p2.hasBucket = false;
+                game.p2.bucketFull = false;
+                game.bucket2.pickedUp = false;
+                game.bucket2.pos = game.p2.pos;
+            }
+        }
     }
 }
 
@@ -768,7 +919,8 @@ void InitPlayer(Player* p, int id, float x, float y) {
     p->railCraftProgress = 0.0f;
     p->lastFrameTime = GetTickCount();
     p->frameDelay = 120;
-
+    p->hasBucket = false;
+    p->bucketFull = false;
     if (id == 1) {
         p->idleSheet.Load(L"Image\\Player\\Player1\\Slime1_Idle_with_shadow.png");
         p->walkSheet.Load(L"Image\\Player\\Player1\\Slime1_Walk_with_shadow.png");

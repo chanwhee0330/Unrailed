@@ -43,6 +43,11 @@ using namespace Gdiplus;
 #define marginX 16
 #define marginY 39
 
+#define START_BTN_LEFT   440
+#define START_BTN_RIGHT  840
+#define START_BTN_TOP    548
+#define START_BTN_BOTTOM 650
+
 struct Vec2 {
     float x, y;
 };
@@ -54,6 +59,7 @@ struct Camera {
 enum PlayerDir { DIR_DOWN, DIR_LEFT, DIR_RIGHT, DIR_UP };
 enum RailDir { RAIL_HORIZONTAL, RAIL_VERTICAL, RAIL_TURN_RD, RAIL_TURN_LD, RAIL_TURN_RU, RAIL_TURN_LU };
 enum ResourceType { RESOURCE_TREE, RESOURCE_ROCK };
+enum GameState { STATE_START, STATE_PLAYING };
 
 struct MapData {
     int tiles[MAP_HEIGHT][MAP_WIDTH];
@@ -160,6 +166,8 @@ struct GameData {
     bool threeKeyPrev;
     bool qKeyPrev;
     bool zeroKeyPrev;
+    GameState gameState;
+    Bitmap* startScreenImage;
 };
 Bitmap* g_emptyBucket = nullptr;
 Bitmap* g_fullBucket = nullptr;
@@ -253,6 +261,9 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
     {
         // init game
         game.hWnd = hWnd;
+        game.gameState = STATE_START;
+        game.startScreenImage = new Bitmap(L"Image\\scene\\gamestart.png");
+        PlaySound(L"Sound\\start sound.wav", NULL, SND_FILENAME | SND_LOOP | SND_ASYNC);
         game.gameOver = false;
         game.winner = 0;
         game.rKeyPrev = false;
@@ -312,6 +323,11 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
     case WM_TIMER:
     {
         if (wParam == TIMER_ID) {
+            if (game.gameState == STATE_START) {
+                InvalidateRect(hWnd, NULL, FALSE);
+                return 0;
+            }
+
             if (!game.gameOver) {
                 // time
                 ULONGLONG now = GetTickCount64();
@@ -524,8 +540,19 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
     {
         hDC = BeginPaint(hWnd, &ps);
 
-        // draw to back buffer
         Graphics g(game.memDC);
+
+        if (game.gameState == STATE_START) {
+            g.Clear(Color(255, 0, 0, 0));
+            if (game.startScreenImage && game.startScreenImage->GetLastStatus() == Ok)
+                g.DrawImage(game.startScreenImage, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+
+            BitBlt(hDC, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, game.memDC, 0, 0, SRCCOPY);
+            EndPaint(hWnd, &ps);
+            return 0;
+        }
+
+        // draw to back buffer
         int halfH = SCREEN_HEIGHT / 2;
 
         // top screen
@@ -614,8 +641,24 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
     case WM_KEYDOWN:
         return 0;
 
+    case WM_LBUTTONDOWN:
+    {
+        if (game.gameState == STATE_START) {
+            int mx = LOWORD(lParam);
+            int my = HIWORD(lParam);
+            if (mx >= START_BTN_LEFT && mx <= START_BTN_RIGHT &&
+                my >= START_BTN_TOP  && my <= START_BTN_BOTTOM) {
+                PlaySound(NULL, NULL, 0);
+                game.gameState = STATE_PLAYING;
+                InvalidateRect(hWnd, NULL, FALSE);
+            }
+        }
+        return 0;
+    }
+
     case WM_DESTROY:
         // release images and dc
+        if (game.startScreenImage) { delete game.startScreenImage; game.startScreenImage = nullptr; }
         ReleaseTrain(&game.train1);
         ReleaseTrain(&game.train2);
         ReleaseRail(&game.rail);

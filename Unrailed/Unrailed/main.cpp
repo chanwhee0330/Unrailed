@@ -71,7 +71,7 @@ enum PlayerDir { DIR_DOWN, DIR_LEFT, DIR_RIGHT, DIR_UP };
 enum RailDir { RAIL_HORIZONTAL, RAIL_VERTICAL, RAIL_TURN_RD, RAIL_TURN_LD, RAIL_TURN_RU, RAIL_TURN_LU };
 enum ResourceType { RESOURCE_TREE, RESOURCE_ROCK };
 enum PlacementType { PLACEMENT_RAIL, PLACEMENT_OBSTACLE, PLACEMENT_BOMB, PLACEMENT_NONE };
-enum GameState { STATE_START, STATE_PLAYING };
+enum GameState { STATE_START, STATE_PLAYING, STATE_PAUSE_MENU, STATE_SETTINGS };
 
 struct MapData {
     int tiles[MAP_HEIGHT][MAP_WIDTH];
@@ -115,6 +115,7 @@ struct Rail {
     std::vector<RailData> rails;
     Bitmap* railImage;
     Bitmap* turnImage;
+    int8_t grid[MAP_HEIGHT][MAP_WIDTH]; // -1=없음, 0이상=RailDir
 };
 
 struct Obstacle {
@@ -174,6 +175,7 @@ struct GameData {
     std::vector<Obstacle> obstacles;
     std::vector<Bomb> bombs;
     std::vector<ExplosionEffect> explosions;
+    bool obstacleGrid[MAP_HEIGHT][MAP_WIDTH];
     bool gameOver;
     int winner;
     bool rKeyPrev;
@@ -200,12 +202,15 @@ struct GameData {
     bool zeroKeyPrev;
     GameState gameState;
     Bitmap* startScreenImage;
+    int volume;
+    bool volDragging;
 };
 Bitmap* g_emptyBucket = nullptr;
 Bitmap* g_fullBucket = nullptr;
 Bitmap* g_bombImage = nullptr;
 HFONT g_inventoryFont = nullptr;
 SolidBrush* g_overHeatBrush = nullptr;
+POINT g_mousePos = { 0, 0 };
 HINSTANCE g_hInst;
 LPCTSTR lpszClass = L"Window Class Name";
 LPCTSTR lpszWindowName = L"Unrailed";
@@ -299,12 +304,21 @@ bool CanPlaceResourceAt(float x, float y);
 bool FindRandomResourcePosition(float* outX, float* outY, int preferredSide = -1);
 void CreateResources();
 void DrawVictoryScreen(Graphics* g);
+void DrawMenuButton(Graphics* g, const wchar_t* text, int x, int y, int w, int h);
+void DrawPauseMenu(Graphics* g);
+void DrawSettingsMenu(Graphics* g);
 bool IsWater(MapData* map, float x, float y) {
     if (x < 0 || y < 0 || x >= map->pixelW || y >= map->pixelH) return false;
     if (map->waterBits.empty()) return false;
     int index = (int)y * map->pixelW + (int)x;
     return (map->waterBits[index / 8] & (1 << (index % 8))) != 0;
 }
+
+void ApplyVolume(int vol) {
+    DWORD v = (DWORD)(vol * 0xFFFF / 100);
+    waveOutSetVolume(0, (v << 16) | v);
+}
+
 LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) {
     PAINTSTRUCT ps;
     HDC hDC;
@@ -316,7 +330,10 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
         game.hWnd = hWnd;
         game.gameState = STATE_START;
         game.startScreenImage = new Bitmap(L"Image\\scene\\gamestart.png");
+        game.volume = 80;
+        game.volDragging = false;
         PlaySound(L"Sound\\start sound.wav", NULL, SND_FILENAME | SND_LOOP | SND_ASYNC);
+        ApplyVolume(game.volume);
         game.gameOver = false;
         game.winner = 0;
         game.rKeyPrev = false;
@@ -340,6 +357,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
         game.obstacles.clear();
         game.bombs.clear();
         game.explosions.clear();
+        memset(game.obstacleGrid, 0, sizeof(game.obstacleGrid));
         g_inventoryFont = CreateFontW(18, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
             DEFAULT_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Arial");
@@ -383,7 +401,9 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
     case WM_TIMER:
     {
         if (wParam == TIMER_ID) {
-            if (game.gameState == STATE_START) {
+            if (game.gameState == STATE_START ||
+                game.gameState == STATE_PAUSE_MENU ||
+                game.gameState == STATE_SETTINGS) {
                 InvalidateRect(hWnd, NULL, FALSE);
                 return 0;
             }
@@ -600,6 +620,40 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
             if (game.startScreenImage && game.startScreenImage->GetLastStatus() == Ok)
                 g.DrawImage(game.startScreenImage, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
 
+            // 시작화면 볼륨 슬라이더 (우하단)
+            // 슬라이더 트랙: sx=1020, sy=672, sw=200, sh=10
+            {
+                const int sx = 1020, sy = 672, sw = 200, sh = 10;
+                // 반투명 배경
+                SolidBrush bgBox(Color(160, 0, 0, 0));
+                g.FillRectangle(&bgBox, sx - 60, sy - 14, sw + 70, sh + 28);
+
+                // "볼륨" 레이블
+                FontFamily ff(L"Arial");
+                Font lf(&ff, 14, FontStyleBold, UnitPixel);
+                SolidBrush white(Color(255, 255, 255, 255));
+                StringFormat sfL;
+                g.DrawString(L"볼륨", -1, &lf, PointF((REAL)(sx - 52), (REAL)(sy - 2)), &sfL, &white);
+
+                // 트랙
+                SolidBrush trackBg(Color(255, 80, 80, 80));
+                g.FillRectangle(&trackBg, sx, sy, sw, sh);
+
+                // 채워진 부분
+                int filled = sw * game.volume / 100;
+                SolidBrush fillBrush(Color(255, 100, 180, 255));
+                g.FillRectangle(&fillBrush, sx, sy, filled, sh);
+
+                // 썸
+                SolidBrush thumbBrush(Color(255, 230, 230, 230));
+                g.FillRectangle(&thumbBrush, sx + filled - 8, sy - 5, 16, 20);
+
+                // 퍼센트 텍스트
+                wchar_t volStr[16];
+                swprintf_s(volStr, L"%d%%", game.volume);
+                g.DrawString(volStr, -1, &lf, PointF((REAL)(sx + sw + 6), (REAL)(sy - 2)), &sfL, &white);
+            }
+
             BitBlt(hDC, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, game.memDC, 0, 0, SRCCOPY);
             EndPaint(hWnd, &ps);
             return 0;
@@ -691,6 +745,16 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
             DrawVictoryScreen(&vg);
         }
 
+        // pause menu / settings overlay
+        if (game.gameState == STATE_PAUSE_MENU) {
+            Graphics og(game.memDC);
+            DrawPauseMenu(&og);
+        }
+        else if (game.gameState == STATE_SETTINGS) {
+            Graphics og(game.memDC);
+            DrawSettingsMenu(&og);
+        }
+
         Pen pen(Color(255, 0, 0, 0), 5);
         g.DrawLine(&pen, 0, halfH, SCREEN_WIDTH, halfH);
         BitBlt(hDC, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, game.memDC, 0, 0, SRCCOPY);
@@ -700,19 +764,110 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
     }
 
     case WM_KEYDOWN:
+        if (wParam == VK_ESCAPE) {
+            if (game.gameState == STATE_PLAYING) {
+                game.gameState = STATE_PAUSE_MENU;
+            }
+            else if (game.gameState == STATE_PAUSE_MENU) {
+                game.gameState = STATE_PLAYING;
+            }
+            else if (game.gameState == STATE_SETTINGS) {
+                game.gameState = STATE_PAUSE_MENU;
+            }
+            InvalidateRect(hWnd, NULL, FALSE);
+        }
         return 0;
 
     case WM_LBUTTONDOWN:
     {
+        int mx = LOWORD(lParam);
+        int my = HIWORD(lParam);
+
         if (game.gameState == STATE_START) {
-            int mx = LOWORD(lParam);
-            int my = HIWORD(lParam);
+            // 게임시작 버튼
             if (mx >= START_BTN_LEFT && mx <= START_BTN_RIGHT &&
                 my >= START_BTN_TOP  && my <= START_BTN_BOTTOM) {
                 PlaySound(NULL, NULL, 0);
                 game.gameState = STATE_PLAYING;
                 InvalidateRect(hWnd, NULL, FALSE);
             }
+            // 볼륨 슬라이더 (sx=1020, sy=672, sw=200, sh=10)
+            else {
+                const int sx = 1020, sy = 672, sw = 200;
+                if (mx >= sx && mx <= sx + sw && my >= sy - 10 && my <= sy + 20) {
+                    game.volDragging = true;
+                    SetCapture(hWnd);
+                    int vol = (mx - sx) * 100 / sw;
+                    if (vol < 0) vol = 0;
+                    if (vol > 100) vol = 100;
+                    game.volume = vol;
+                    ApplyVolume(vol);
+                    InvalidateRect(hWnd, NULL, FALSE);
+                }
+            }
+        }
+        else if (game.gameState == STATE_PAUSE_MENU) {
+            // bx=470, by=190
+            // 계속하기: 490, 255, 300, 50
+            if (mx >= 490 && mx <= 790 && my >= 255 && my <= 305) {
+                game.gameState = STATE_PLAYING;
+                InvalidateRect(hWnd, NULL, FALSE);
+            }
+            // 설정: 490, 320, 300, 50
+            else if (mx >= 490 && mx <= 790 && my >= 320 && my <= 370) {
+                game.gameState = STATE_SETTINGS;
+                InvalidateRect(hWnd, NULL, FALSE);
+            }
+            // 게임 종료: 490, 385, 300, 50
+            else if (mx >= 490 && mx <= 790 && my >= 385 && my <= 435) {
+                PostQuitMessage(0);
+            }
+        }
+        else if (game.gameState == STATE_SETTINGS) {
+            // bx=440, by=230
+            // volume slider track: sx=520, sy=305, sw=290, sh=10
+            const int sx = 520, sy = 305, sw = 290;
+            if (mx >= sx && mx <= sx + sw && my >= sy - 10 && my <= sy + 20) {
+                game.volDragging = true;
+                SetCapture(hWnd);
+                int vol = (mx - sx) * 100 / sw;
+                if (vol < 0) vol = 0;
+                if (vol > 100) vol = 100;
+                game.volume = vol;
+                ApplyVolume(vol);
+                InvalidateRect(hWnd, NULL, FALSE);
+            }
+            // 뒤로 button: bx+20=460, by+160=390, w=360, h=50
+            else if (mx >= 460 && mx <= 820 && my >= 390 && my <= 440) {
+                game.gameState = STATE_PAUSE_MENU;
+                InvalidateRect(hWnd, NULL, FALSE);
+            }
+        }
+        return 0;
+    }
+
+    case WM_MOUSEMOVE:
+    {
+        g_mousePos = { (LONG)LOWORD(lParam), (LONG)HIWORD(lParam) };
+        if (game.volDragging) {
+            // 슬라이더 트랙 위치: 시작화면 sx=1020 sw=200 / 설정화면 sx=520 sw=290
+            int sx = (game.gameState == STATE_START) ? 1020 : 520;
+            int sw = (game.gameState == STATE_START) ? 200  : 290;
+            int vol = ((int)(SHORT)LOWORD(lParam) - sx) * 100 / sw;
+            if (vol < 0) vol = 0;
+            if (vol > 100) vol = 100;
+            game.volume = vol;
+            ApplyVolume(vol);
+            InvalidateRect(hWnd, NULL, FALSE);
+        }
+        return 0;
+    }
+
+    case WM_LBUTTONUP:
+    {
+        if (game.volDragging) {
+            game.volDragging = false;
+            ReleaseCapture();
         }
         return 0;
     }
@@ -1413,6 +1568,7 @@ void DrawInventory(Player* p, HDC hdc, Camera cam, int offsetY) {
 void InitRail(Rail* rail) {
     rail->railImage = new Bitmap(L"Image\\train\\rail.png");
     rail->turnImage = new Bitmap(L"Image\\train\\turn rail.png");
+    memset(rail->grid, -1, sizeof(rail->grid));
 }
 
 void ReleaseRail(Rail* rail) {
@@ -1422,33 +1578,23 @@ void ReleaseRail(Rail* rail) {
 }
 
 bool HasHorizontal(Rail* rail, int tileX, int tileY) {
-    for (int i = 0; i < (int)rail->rails.size(); i++) {
-        RailData r = rail->rails[i];
-        if (r.tileX == tileX && r.tileY == tileY && r.dir == RAIL_HORIZONTAL) return true;
-    }
-    return false;
+    if (tileX < 0 || tileY < 0 || tileX >= MAP_WIDTH || tileY >= MAP_HEIGHT) return false;
+    return rail->grid[tileY][tileX] == (int8_t)RAIL_HORIZONTAL;
 }
 
 bool HasVertical(Rail* rail, int tileX, int tileY) {
-    for (int i = 0; i < (int)rail->rails.size(); i++) {
-        RailData r = rail->rails[i];
-        if (r.tileX == tileX && r.tileY == tileY && r.dir == RAIL_VERTICAL) return true;
-    }
-    return false;
+    if (tileX < 0 || tileY < 0 || tileX >= MAP_WIDTH || tileY >= MAP_HEIGHT) return false;
+    return rail->grid[tileY][tileX] == (int8_t)RAIL_VERTICAL;
 }
 
 bool HasRail(Rail* rail, int tileX, int tileY) {
-    for (int i = 0; i < (int)rail->rails.size(); i++) {
-        if (rail->rails[i].tileX == tileX && rail->rails[i].tileY == tileY) return true;
-    }
-    return false;
+    if (tileX < 0 || tileY < 0 || tileX >= MAP_WIDTH || tileY >= MAP_HEIGHT) return false;
+    return rail->grid[tileY][tileX] >= 0;
 }
 
 bool HasObstacle(int tileX, int tileY) {
-    for (int i = 0; i < (int)game.obstacles.size(); i++) {
-        if (game.obstacles[i].tileX == tileX && game.obstacles[i].tileY == tileY) return true;
-    }
-    return false;
+    if (tileX < 0 || tileY < 0 || tileX >= MAP_WIDTH || tileY >= MAP_HEIGHT) return false;
+    return game.obstacleGrid[tileY][tileX];
 }
 
 bool HasBomb(int tileX, int tileY) {
@@ -1513,6 +1659,7 @@ bool PlaceObstacle(int tileX, int tileY, int owner) {
     obstacle.tileY = tileY;
     obstacle.owner = owner;
     game.obstacles.push_back(obstacle);
+    game.obstacleGrid[tileY][tileX] = true;
     return true;
 }
 
@@ -1573,6 +1720,7 @@ void UpdateBombs(float deltaTime) {
 
         for (int j = (int)game.obstacles.size() - 1; j >= 0; j--) {
             if (game.obstacles[j].tileX == tileX && game.obstacles[j].tileY == tileY) {
+                game.obstacleGrid[tileY][tileX] = false;
                 game.obstacles.erase(game.obstacles.begin() + j);
                 break;
             }
@@ -1591,10 +1739,9 @@ void UpdateExplosions(float deltaTime) {
 }
 
 RailDir GetRailDir(Rail* rail, int tileX, int tileY) {
-    for (int i = 0; i < (int)rail->rails.size(); i++) {
-        if (rail->rails[i].tileX == tileX && rail->rails[i].tileY == tileY) return rail->rails[i].dir;
-    }
-    return RAIL_HORIZONTAL;
+    if (tileX < 0 || tileY < 0 || tileX >= MAP_WIDTH || tileY >= MAP_HEIGHT) return RAIL_HORIZONTAL;
+    int8_t v = rail->grid[tileY][tileX];
+    return (v >= 0) ? (RailDir)v : RAIL_HORIZONTAL;
 }
 
 RailDir AutoDetectRailDir(Rail* rail, int tileX, int tileY, RailDir baseDir) {
@@ -1623,6 +1770,7 @@ void UpdateRailNeighbors(Rail* rail, int tileX, int tileY) {
         for (int j = 0; j < (int)rail->rails.size(); j++) {
             if (rail->rails[j].tileX == nx && rail->rails[j].tileY == ny) {
                 rail->rails[j].dir = AutoDetectRailDir(rail, nx, ny, rail->rails[j].dir);
+                rail->grid[ny][nx] = (int8_t)rail->rails[j].dir;
             }
         }
     }
@@ -1637,6 +1785,7 @@ bool PlaceRail(Rail* rail, int tileX, int tileY, RailDir dir, int owner) {
     data.dir = AutoDetectRailDir(rail, tileX, tileY, dir);
     data.owner = owner;
     rail->rails.push_back(data);
+    rail->grid[tileY][tileX] = (int8_t)data.dir;
     UpdateRailNeighbors(rail, tileX, tileY);
     return true;
 }
@@ -1654,7 +1803,8 @@ PlacementType GetNextPlacementType(Player* player, PlacementType placementType) 
     if (game.infiniteResourceMode || player->bombCount > 0) {
         options[count++] = PLACEMENT_BOMB;
     }
-    options[count++] = PLACEMENT_NONE;
+    // 선택지가 2개 이상일 때만 NONE 추가 (1개면 사이클해도 계속 같은 타입 유지)
+    if (count != 1) options[count++] = PLACEMENT_NONE;
 
     for (int i = 0; i < count; i++) {
         if (options[i] == placementType) {
@@ -1829,6 +1979,9 @@ void DrawBombs(Graphics* g, Camera cam, int viewW, int viewH) {
     const float right = cam.x + viewW + TILE_SIZE;
     const float bottom = cam.y + viewH + TILE_SIZE;
 
+    SolidBrush bgBrush(Color(255, 0, 0, 0));
+    SolidBrush fillBrush(Color(255, 255, 60, 35));
+
     for (int i = 0; i < (int)game.bombs.size(); i++) {
         float x = (float)(game.bombs[i].tileX * TILE_SIZE);
         float y = (float)(game.bombs[i].tileY * TILE_SIZE);
@@ -1839,8 +1992,6 @@ void DrawBombs(Graphics* g, Camera cam, int viewW, int viewH) {
 
         float ratio = game.bombs[i].timer / BOMB_EXPLODE_TIME;
         if (ratio < 0.0f) ratio = 0.0f;
-        SolidBrush bgBrush(Color(255, 0, 0, 0));
-        SolidBrush fillBrush(Color(255, 255, 60, 35));
         g->FillRectangle(&bgBrush, x, y - 7.0f, (float)TILE_SIZE, 4.0f);
         g->FillRectangle(&fillBrush, x, y - 7.0f, (float)TILE_SIZE * ratio, 4.0f);
     }
@@ -1852,6 +2003,13 @@ void DrawExplosions(Graphics* g, Camera cam, int viewW, int viewH) {
     const float top = cam.y - padding;
     const float right = cam.x + viewW + padding;
     const float bottom = cam.y + viewH + padding;
+
+    if (game.explosions.empty()) return;
+
+    SolidBrush outerBrush(Color(0, 0, 0, 0));
+    SolidBrush midBrush(Color(0, 0, 0, 0));
+    SolidBrush smokeBrush(Color(0, 0, 0, 0));
+    Pen ringPen(Color(0, 0, 0, 0), 2.0f);
 
     for (int i = 0; i < (int)game.explosions.size(); i++) {
         ExplosionEffect effect = game.explosions[i];
@@ -1865,10 +2023,10 @@ void DrawExplosions(Graphics* g, Camera cam, int viewW, int viewH) {
         float outerRadius = 10.0f + 34.0f * age;
         float innerRadius = 6.0f + 14.0f * age;
 
-        SolidBrush outerBrush(Color(alpha, 255, 85, 30));
-        SolidBrush midBrush(Color((BYTE)(alpha * 0.85f), 255, 180, 45));
-        SolidBrush smokeBrush(Color((BYTE)(alpha * 0.45f), 60, 52, 48));
-        Pen ringPen(Color(alpha, 255, 230, 90), 2.0f);
+        outerBrush.SetColor(Color(alpha, 255, 85, 30));
+        midBrush.SetColor(Color((BYTE)(alpha * 0.85f), 255, 180, 45));
+        smokeBrush.SetColor(Color((BYTE)(alpha * 0.45f), 60, 52, 48));
+        ringPen.SetColor(Color(alpha, 255, 230, 90));
 
         g->FillEllipse(&outerBrush, effect.x - outerRadius, effect.y - outerRadius,
             outerRadius * 2.0f, outerRadius * 2.0f);
@@ -2118,15 +2276,16 @@ void DrawResource(Resource* resource, Graphics* g, Camera cam, int viewW, int vi
     float drawX = resource->pos.x + (resource->size - drawSize) / 2.0f;
     float drawY = resource->pos.y + (resource->size - drawSize) / 2.0f;
 
+    static SolidBrush trunk(Color(255, 120, 72, 32));
+    static SolidBrush leaves(Color(255, 32, 150, 76));
+    static SolidBrush rock(Color(255, 115, 120, 130));
+    static Pen edge(Color(255, 75, 80, 90), 2.0f);
+
     if (resource->type == RESOURCE_TREE) {
-        SolidBrush trunk(Color(255, 120, 72, 32));
-        SolidBrush leaves(Color(255, 32, 150, 76));
         g->FillRectangle(&trunk, drawX + drawSize * 0.42f, drawY + drawSize * 0.48f, drawSize * 0.16f, drawSize * 0.42f);
         g->FillEllipse(&leaves, drawX + drawSize * 0.12f, drawY + drawSize * 0.02f, drawSize * 0.76f, drawSize * 0.62f);
     }
     else {
-        SolidBrush rock(Color(255, 115, 120, 130));
-        Pen edge(Color(255, 75, 80, 90), 2.0f);
         RectF rect(drawX + drawSize * 0.08f, drawY + drawSize * 0.22f, drawSize * 0.84f, drawSize * 0.58f);
         g->FillEllipse(&rock, rect);
         g->DrawEllipse(&edge, rect);
@@ -2234,5 +2393,104 @@ void DrawVictoryScreen(Graphics* g) {
 
     RectF rect(0.0f, 0.0f, (REAL)SCREEN_WIDTH, (REAL)SCREEN_HEIGHT);
     g->DrawString(msg.c_str(), -1, &font, rect, &sf, &textBrush);
+}
+
+// ─────────────────────────────────────────────────────────────
+//  Menu helpers
+// ─────────────────────────────────────────────────────────────
+void DrawMenuButton(Graphics* g, const wchar_t* text, int x, int y, int w, int h) {
+    SolidBrush btnBg(Color(220, 60, 60, 60));
+    Pen borderPen(Color(255, 200, 200, 200), 1.5f);
+    SolidBrush txtBrush(Color(255, 255, 255, 255));
+    g->FillRectangle(&btnBg, x, y, w, h);
+    g->DrawRectangle(&borderPen, x, y, w, h);
+    FontFamily ff(L"Arial");
+    Font btnFont(&ff, 18, FontStyleBold, UnitPixel);
+    StringFormat sf;
+    sf.SetAlignment(StringAlignmentCenter);
+    sf.SetLineAlignment(StringAlignmentCenter);
+    RectF rect((REAL)x, (REAL)y, (REAL)w, (REAL)h);
+    g->DrawString(text, -1, &btnFont, rect, &sf, &txtBrush);
+}
+
+// Pause menu layout  (bx=470, by=190, bw=340, bh=300)
+//   계속하기  → bx+20, by+65,  w=300, h=50
+//   설정      → bx+20, by+130, w=300, h=50
+//   게임 종료 → bx+20, by+195, w=300, h=50
+void DrawPauseMenu(Graphics* g) {
+    SolidBrush dim(Color(160, 0, 0, 0));
+    g->FillRectangle(&dim, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+
+    const int bx = 470, by = 190, bw = 340, bh = 300;
+    SolidBrush boxBg(Color(230, 30, 30, 30));
+    Pen boxBorder(Color(255, 180, 180, 180), 2.0f);
+    g->FillRectangle(&boxBg, bx, by, bw, bh);
+    g->DrawRectangle(&boxBorder, bx, by, bw, bh);
+
+    FontFamily ff(L"Arial");
+    Font titleFont(&ff, 24, FontStyleBold, UnitPixel);
+    SolidBrush whiteBrush(Color(255, 255, 255, 255));
+    StringFormat sfCenter;
+    sfCenter.SetAlignment(StringAlignmentCenter);
+    RectF titleRect((REAL)bx, (REAL)(by + 15), (REAL)bw, 35.0f);
+    g->DrawString(L"일시정지", -1, &titleFont, titleRect, &sfCenter, &whiteBrush);
+
+    DrawMenuButton(g, L"계속하기",  bx + 20, by + 65,  300, 50);
+    DrawMenuButton(g, L"설정",      bx + 20, by + 130, 300, 50);
+    DrawMenuButton(g, L"게임 종료", bx + 20, by + 195, 300, 50);
+}
+
+// Settings layout  (bx=440, by=230, bw=400, bh=260)
+//   volume slider track: sx=bx+80=520, sy=by+75=305, sw=290, sh=10
+//   뒤로 button:         bx+20, by+160, bw-40=360, h=50
+void DrawSettingsMenu(Graphics* g) {
+    SolidBrush dim(Color(160, 0, 0, 0));
+    g->FillRectangle(&dim, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+
+    const int bx = 440, by = 230, bw = 400, bh = 260;
+    SolidBrush boxBg(Color(230, 30, 30, 30));
+    Pen boxBorder(Color(255, 180, 180, 180), 2.0f);
+    g->FillRectangle(&boxBg, bx, by, bw, bh);
+    g->DrawRectangle(&boxBorder, bx, by, bw, bh);
+
+    FontFamily ff(L"Arial");
+    Font titleFont(&ff, 24, FontStyleBold, UnitPixel);
+    Font labelFont(&ff, 18, FontStyleRegular, UnitPixel);
+    SolidBrush whiteBrush(Color(255, 255, 255, 255));
+    StringFormat sfCenter;
+    sfCenter.SetAlignment(StringAlignmentCenter);
+    StringFormat sfLeft;
+
+    // title
+    RectF titleRect((REAL)bx, (REAL)(by + 15), (REAL)bw, 35.0f);
+    g->DrawString(L"설정", -1, &titleFont, titleRect, &sfCenter, &whiteBrush);
+
+    // "볼륨" label
+    g->DrawString(L"볼륨", -1, &labelFont,
+        PointF((REAL)(bx + 20), (REAL)(by + 68)), &sfLeft, &whiteBrush);
+
+    // slider track
+    const int sx = bx + 80, sy = by + 75, sw = 290, sh = 10;
+    SolidBrush trackBg(Color(255, 80, 80, 80));
+    g->FillRectangle(&trackBg, sx, sy, sw, sh);
+
+    // filled portion
+    int filled = sw * game.volume / 100;
+    SolidBrush fillBrush(Color(255, 100, 180, 255));
+    g->FillRectangle(&fillBrush, sx, sy, filled, sh);
+
+    // thumb
+    int tx = sx + filled - 8;
+    SolidBrush thumbBrush(Color(255, 230, 230, 230));
+    g->FillRectangle(&thumbBrush, tx, sy - 5, 16, 20);
+
+    // percentage text
+    wchar_t volStr[16];
+    swprintf_s(volStr, L"%d%%", game.volume);
+    g->DrawString(volStr, -1, &labelFont,
+        PointF((REAL)(bx + bw - 55), (REAL)(by + 68)), &sfLeft, &whiteBrush);
+
+    // back button
+    DrawMenuButton(g, L"뒤로", bx + 20, by + 160, bw - 40, 50);
 }
 

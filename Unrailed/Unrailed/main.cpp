@@ -42,12 +42,13 @@ using namespace Gdiplus;
 #define PLAYER_COLLISION_BOTTOM 42
 #define TRAIN_WIDTH 96.0f
 #define TRAIN_HEIGHT 48.0f
+#define TRAIN_ROT_SPEED 180.0f  // 기차 회전 속도(초당 도). 작을수록 천천히 회전
 #define BUCKET_SIZE 64.0f
 #define HELD_BUCKET_SIZE 48.0f
 #define RESOURCE_SIZE 64.0f
 
 #define MAX_HEAT 100.0f
-#define HEAT_RATE 0.07f
+#define HEAT_RATE 0.035f
 #define TIMER_ID 1
 #define TARGET_FRAME_MS 16
 #define MAX_FRAME_DELTA 0.05f
@@ -71,7 +72,7 @@ enum PlayerDir { DIR_DOWN, DIR_LEFT, DIR_RIGHT, DIR_UP };
 enum RailDir { RAIL_HORIZONTAL, RAIL_VERTICAL, RAIL_TURN_RD, RAIL_TURN_LD, RAIL_TURN_RU, RAIL_TURN_LU };
 enum ResourceType { RESOURCE_TREE, RESOURCE_ROCK };
 enum PlacementType { PLACEMENT_RAIL, PLACEMENT_OBSTACLE, PLACEMENT_BOMB, PLACEMENT_NONE };
-enum GameState { STATE_START, STATE_PLAYING, STATE_PAUSE_MENU, STATE_SETTINGS };
+enum GameState { STATE_START, STATE_GAME_START, STATE_PLAYING, STATE_PAUSE_MENU, STATE_SETTINGS };
 
 struct MapData {
     int tiles[MAP_HEIGHT][MAP_WIDTH];
@@ -143,6 +144,7 @@ struct Train {
     int bombCargo;
     ULONGLONG lastTime;
     Bitmap* image;
+    float renderAngle; // 화면에 표시되는 회전 각도(도). 목표 방향으로 부드럽게 보간됨
 };
 struct Bucket {
     Vec2 pos;
@@ -204,10 +206,13 @@ struct GameData {
     Bitmap* startScreenImage;
     int volume;
     bool volDragging;
+    float gameStartCountdown;
+    bool trainSoundStarted;
 };
 Bitmap* g_emptyBucket = nullptr;
 Bitmap* g_fullBucket = nullptr;
 Bitmap* g_bombImage = nullptr;
+Bitmap* g_emergencyImage = nullptr;
 HFONT g_inventoryFont = nullptr;
 SolidBrush* g_overHeatBrush = nullptr;
 POINT g_mousePos = { 0, 0 };
@@ -289,6 +294,7 @@ void InitTrain(Train* train, float x, float y, int direction, const wchar_t* ima
 void ReleaseTrain(Train* train);
 bool IsTrainOverheated(Train* train);
 void UpdateTrainDirection(Train* train, RailDir rd);
+int CountRailsAhead(Train* train, Rail* rail, int maxCount);
 void UpdateTrain(Train* train, Rail* rail, float deltaTime);
 void DrawHeatBar(Train* train, Graphics* g);
 void DrawTrain(Train* train, Graphics* g, Camera cam, int viewW, int viewH);
@@ -307,6 +313,7 @@ void DrawVictoryScreen(Graphics* g);
 void DrawMenuButton(Graphics* g, const wchar_t* text, int x, int y, int w, int h);
 void DrawPauseMenu(Graphics* g);
 void DrawSettingsMenu(Graphics* g);
+void DrawGameStartOverlay(Graphics* g);
 bool IsWater(MapData* map, float x, float y) {
     if (x < 0 || y < 0 || x >= map->pixelW || y >= map->pixelH) return false;
     if (map->waterBits.empty()) return false;
@@ -332,6 +339,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
         game.startScreenImage = new Bitmap(L"Image\\scene\\gamestart.png");
         game.volume = 80;
         game.volDragging = false;
+        game.gameStartCountdown = 0.0f;
+        game.trainSoundStarted = false;
         PlaySound(L"Sound\\start sound.wav", NULL, SND_FILENAME | SND_LOOP | SND_ASYNC);
         ApplyVolume(game.volume);
         game.gameOver = false;
@@ -371,6 +380,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
         g_emptyBucket = new Bitmap(L"Image\\train\\bucket.png");  // 경로 채워줘
         g_fullBucket = new Bitmap(L"Image\\train\\waterbucket.png");  // 경로 채워줘
         g_bombImage = new Bitmap(L"Image\\train\\bomb.png");
+        g_emergencyImage = new Bitmap(L"Image\\train\\emergemcy.png");
         HDC hdc = GetDC(hWnd);
         game.memDC = CreateCompatibleDC(hdc);
         game.memBitmap = CreateCompatibleBitmap(hdc, SCREEN_WIDTH, SCREEN_HEIGHT);
@@ -404,6 +414,43 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
             if (game.gameState == STATE_START ||
                 game.gameState == STATE_PAUSE_MENU ||
                 game.gameState == STATE_SETTINGS) {
+                InvalidateRect(hWnd, NULL, FALSE);
+                return 0;
+            }
+
+            if (game.gameState == STATE_GAME_START) {
+                ULONGLONG now = GetTickCount64();
+                float dt = (float)(now - game.lastUpdateTime) / 1000.0f;
+                if (dt > MAX_FRAME_DELTA) dt = MAX_FRAME_DELTA;
+                game.lastUpdateTime = now;
+
+                // 카메라를 플레이어 위치로 맞춤
+                int halfH = SCREEN_HEIGHT / 2;
+                game.cam1.x = game.p1.pos.x - SCREEN_WIDTH / 2;
+                game.cam1.y = game.p1.pos.y - (halfH / 2);
+                if (game.cam1.x < 0) game.cam1.x = 0;
+                if (game.cam1.y < 0) game.cam1.y = 0;
+                if (game.cam1.x > MAP_WIDTH * TILE_SIZE - SCREEN_WIDTH) game.cam1.x = (float)(MAP_WIDTH * TILE_SIZE - SCREEN_WIDTH);
+                if (game.cam1.y > MAP_HEIGHT * TILE_SIZE - halfH) game.cam1.y = (float)(MAP_HEIGHT * TILE_SIZE - halfH);
+                game.cam2.x = game.p2.pos.x - SCREEN_WIDTH / 2;
+                game.cam2.y = game.p2.pos.y - (halfH / 2);
+                if (game.cam2.x < 0) game.cam2.x = 0;
+                if (game.cam2.y < 0) game.cam2.y = 0;
+                if (game.cam2.x > MAP_WIDTH * TILE_SIZE - SCREEN_WIDTH) game.cam2.x = (float)(MAP_WIDTH * TILE_SIZE - SCREEN_WIDTH);
+                if (game.cam2.y > MAP_HEIGHT * TILE_SIZE - halfH) game.cam2.y = (float)(MAP_HEIGHT * TILE_SIZE - halfH);
+
+                game.gameStartCountdown -= dt;
+
+                // 클릭음(0.5s)이 끝난 뒤 기차음 재생
+                if (!game.trainSoundStarted && game.gameStartCountdown <= 5.0f) {
+                    PlaySound(L"Sound\\trainsound.wav", NULL, SND_FILENAME | SND_ASYNC);
+                    game.trainSoundStarted = true;
+                }
+
+                if (game.gameStartCountdown <= 0.0f) {
+                    PlaySound(L"Sound\\gamevolume.wav", NULL, SND_FILENAME | SND_LOOP | SND_ASYNC);
+                    game.gameState = STATE_PLAYING;
+                }
                 InvalidateRect(hWnd, NULL, FALSE);
                 return 0;
             }
@@ -754,6 +801,10 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
             Graphics og(game.memDC);
             DrawSettingsMenu(&og);
         }
+        else if (game.gameState == STATE_GAME_START) {
+            Graphics og(game.memDC);
+            DrawGameStartOverlay(&og);
+        }
 
         Pen pen(Color(255, 0, 0, 0), 5);
         g.DrawLine(&pen, 0, halfH, SCREEN_WIDTH, halfH);
@@ -788,7 +839,11 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
             if (mx >= START_BTN_LEFT && mx <= START_BTN_RIGHT &&
                 my >= START_BTN_TOP  && my <= START_BTN_BOTTOM) {
                 PlaySound(NULL, NULL, 0);
-                game.gameState = STATE_PLAYING;
+                PlaySound(L"Sound\\reacionsound.wav", NULL, SND_FILENAME | SND_ASYNC);
+                game.gameStartCountdown = 5.5f;   // 0.5s 클릭음 + 5.0s 기차음
+                game.trainSoundStarted = false;
+                game.lastUpdateTime = GetTickCount64();
+                game.gameState = STATE_GAME_START;
                 InvalidateRect(hWnd, NULL, FALSE);
             }
             // 볼륨 슬라이더 (sx=1020, sy=672, sw=200, sh=10)
@@ -887,6 +942,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
         delete g_fullBucket;
         delete g_bombImage;
         g_bombImage = nullptr;
+        delete g_emergencyImage;
+        g_emergencyImage = nullptr;
         if (g_inventoryFont) {
             DeleteObject(g_inventoryFont);
             g_inventoryFont = nullptr;
@@ -2052,6 +2109,8 @@ void InitTrain(Train* train, float x, float y, int direction, const wchar_t* ima
     train->bombCargo = 0;
     train->lastTime = GetTickCount64();
     train->image = new Bitmap(imagePath);
+    // 시작 방향 헤딩(+x=0도, -x=180도)
+    train->renderAngle = (direction > 0) ? 0.0f : 180.0f;
 }
 
 void ReleaseTrain(Train* train) {
@@ -2084,11 +2143,52 @@ void UpdateTrainDirection(Train* train, RailDir rd) {
     }
 }
 
+// 레일 종류에 따라 방향(dx,dy)을 갱신 (UpdateTrainDirection의 로컬 버전)
+static void StepRailDir(RailDir rd, float& dx, float& dy) {
+    if (rd == RAIL_HORIZONTAL) dy = 0;
+    else if (rd == RAIL_VERTICAL) dx = 0;
+    else if (rd == RAIL_TURN_RD) {
+        if (dx < 0) { dx = 0; dy = 1; }
+        else if (dy < 0) { dx = 1; dy = 0; }
+    }
+    else if (rd == RAIL_TURN_LD) {
+        if (dx > 0) { dx = 0; dy = 1; }
+        else if (dy < 0) { dx = -1; dy = 0; }
+    }
+    else if (rd == RAIL_TURN_RU) {
+        if (dx < 0) { dx = 0; dy = -1; }
+        else if (dy > 0) { dx = 1; dy = 0; }
+    }
+    else if (rd == RAIL_TURN_LU) {
+        if (dx > 0) { dx = 0; dy = -1; }
+        else if (dy > 0) { dx = -1; dy = 0; }
+    }
+}
+
+// 기차 진행 방향으로 커브를 따라가며 앞에 남은 레일 타일 수를 센다 (현재 타일 제외)
+int CountRailsAhead(Train* train, Rail* rail, int maxCount) {
+    int tx = (int)((train->pos.x + TRAIN_WIDTH / 2.0f) / TILE_SIZE);
+    int ty = (int)((train->pos.y + TRAIN_HEIGHT / 2.0f) / TILE_SIZE);
+    float dx = train->dirX, dy = train->dirY;
+    if (HasRail(rail, tx, ty)) StepRailDir(GetRailDir(rail, tx, ty), dx, dy);
+
+    int count = 0;
+    while (count < maxCount) {
+        int nx = tx + (dx > 0 ? 1 : (dx < 0 ? -1 : 0));
+        int ny = ty + (dy > 0 ? 1 : (dy < 0 ? -1 : 0));
+        if (!HasRail(rail, nx, ny)) break;
+        tx = nx; ty = ny;
+        StepRailDir(GetRailDir(rail, tx, ty), dx, dy);
+        count++;
+    }
+    return count;
+}
+
 void UpdateTrain(Train* train, Rail* rail, float deltaTime) {
     if (game.gameOver) return;
     if (train->finished) return;
 
-    if (IsTrainOverheated(train)) {
+    if (!game.infiniteResourceMode && IsTrainOverheated(train)) {
         train->heat = MAX_HEAT;
         return;
     }
@@ -2132,8 +2232,23 @@ void UpdateTrain(Train* train, Rail* rail, float deltaTime) {
         train->finished = true;
     }
 
-    train->heat += HEAT_RATE * deltaTime * 60.0f;
-    if (train->heat > MAX_HEAT) train->heat = MAX_HEAT;
+    // 진행 방향(헤딩)으로 회전 각도를 부드럽게 보간
+    float targetAngle = atan2f(train->dirY, train->dirX) * 180.0f / 3.14159265f;
+    float diff = targetAngle - train->renderAngle;
+    while (diff > 180.0f) diff -= 360.0f;
+    while (diff < -180.0f) diff += 360.0f;
+    float maxStep = TRAIN_ROT_SPEED * deltaTime;
+    if (diff > maxStep) train->renderAngle += maxStep;
+    else if (diff < -maxStep) train->renderAngle -= maxStep;
+    else train->renderAngle = targetAngle;
+
+    if (game.infiniteResourceMode) {
+        train->heat = 0.0f;
+    }
+    else {
+        train->heat += HEAT_RATE * deltaTime * 60.0f;
+        if (train->heat > MAX_HEAT) train->heat = MAX_HEAT;
+    }
 }
 
 void DrawHeatBar(Train* train, Graphics* g) {
@@ -2186,13 +2301,39 @@ void DrawTrain(Train* train, Graphics* g, Camera cam, int viewW, int viewH) {
         DrawBombIcon(g, cargoX + 6.0f, cargoY + 4.0f, 18.0f, 255);
     }
 
-    g->DrawImage(train->image, train->pos.x, train->pos.y, TRAIN_WIDTH, TRAIN_HEIGHT);
+    // 진행 방향에 맞춰 기차 회전 (UpdateTrain에서 부드럽게 보간된 각도 사용)
+    // train1 이미지는 오른쪽(+x), train2 이미지는 왼쪽(-x)을 보고 있음
+    float baseAngle = (train == &game.train1) ? 0.0f : 180.0f;
+    float rot = train->renderAngle - baseAngle;
 
+    float cx = train->pos.x + TRAIN_WIDTH / 2.0f;
+    float cy = train->pos.y + TRAIN_HEIGHT / 2.0f;
+
+    Matrix savedTransform;
+    g->GetTransform(&savedTransform);
+    g->TranslateTransform(cx, cy);
+    g->RotateTransform(rot);
+    g->DrawImage(train->image, -TRAIN_WIDTH / 2.0f, -TRAIN_HEIGHT / 2.0f, TRAIN_WIDTH, TRAIN_HEIGHT);
     if (IsTrainOverheated(train) && g_overHeatBrush) {
-        g->FillRectangle(g_overHeatBrush, train->pos.x, train->pos.y, TRAIN_WIDTH, TRAIN_HEIGHT);
+        g->FillRectangle(g_overHeatBrush, -TRAIN_WIDTH / 2.0f, -TRAIN_HEIGHT / 2.0f, TRAIN_WIDTH, TRAIN_HEIGHT);
     }
+    g->SetTransform(&savedTransform);
 
     DrawHeatBar(train, g);
+
+    // 탈선 위기(앞에 남은 레일이 1개 이하)이면 기차 상단에 경고 이미지 깜빡임
+    if (!train->finished && !game.gameOver &&
+        CountRailsAhead(train, &game.rail, 3) <= 1 &&
+        g_emergencyImage && g_emergencyImage->GetLastStatus() == Ok) {
+        bool blinkOn = ((GetTickCount64() / 300) % 2) == 0; // 0.3초 간격 깜빡임
+        if (blinkOn) {
+            const float warnW = 64.0f;
+            const float warnH = 64.0f * 369.0f / 677.0f; // 원본 비율 유지
+            float wx = train->pos.x + (TRAIN_WIDTH - warnW) / 2.0f;
+            float wy = train->pos.y - 18.0f - warnH; // 열 바 위쪽
+            g->DrawImage(g_emergencyImage, wx, wy, warnW, warnH);
+        }
+    }
 
 }
 
@@ -2492,5 +2633,21 @@ void DrawSettingsMenu(Graphics* g) {
 
     // back button
     DrawMenuButton(g, L"뒤로", bx + 20, by + 160, bw - 40, 50);
+}
+
+void DrawGameStartOverlay(Graphics* g) {
+    // 반투명 어두운 배경
+    SolidBrush dim(Color(160, 0, 0, 0));
+    g->FillRectangle(&dim, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+
+    FontFamily ff(L"Arial");
+    Font bigFont(&ff, 90, FontStyleBold, UnitPixel);
+    SolidBrush yellowBrush(Color(255, 255, 220, 0));
+    StringFormat sf;
+    sf.SetAlignment(StringAlignmentCenter);
+    sf.SetLineAlignment(StringAlignmentCenter);
+
+    RectF rect(0.0f, 0.0f, (REAL)SCREEN_WIDTH, (REAL)SCREEN_HEIGHT);
+    g->DrawString(L"Game Start!", -1, &bigFont, rect, &sf, &yellowBrush);
 }
 

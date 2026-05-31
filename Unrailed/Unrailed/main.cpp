@@ -60,6 +60,18 @@ using namespace Gdiplus;
 #define START_BTN_TOP    548
 #define START_BTN_BOTTOM 650
 
+// 시작화면 우상단 "조작법" 버튼 (Helper.png, 659x379 비율 유지)
+#define CTRL_BTN_LEFT    1142
+#define CTRL_BTN_RIGHT   1252
+#define CTRL_BTN_TOP     18
+#define CTRL_BTN_BOTTOM  81
+
+// 조작법 화면 "뒤로" 버튼
+#define CTRL_BACK_LEFT   560
+#define CTRL_BACK_RIGHT  720
+#define CTRL_BACK_TOP    648
+#define CTRL_BACK_BOTTOM 698
+
 struct Vec2 {
     float x, y;
 };
@@ -72,7 +84,7 @@ enum PlayerDir { DIR_DOWN, DIR_LEFT, DIR_RIGHT, DIR_UP };
 enum RailDir { RAIL_HORIZONTAL, RAIL_VERTICAL, RAIL_TURN_RD, RAIL_TURN_LD, RAIL_TURN_RU, RAIL_TURN_LU };
 enum ResourceType { RESOURCE_TREE, RESOURCE_ROCK };
 enum PlacementType { PLACEMENT_RAIL, PLACEMENT_OBSTACLE, PLACEMENT_BOMB, PLACEMENT_NONE };
-enum GameState { STATE_START, STATE_GAME_START, STATE_PLAYING, STATE_PAUSE_MENU, STATE_SETTINGS };
+enum GameState { STATE_START, STATE_GAME_START, STATE_PLAYING, STATE_PAUSE_MENU, STATE_SETTINGS, STATE_CONTROLS };
 
 struct MapData {
     int tiles[MAP_HEIGHT][MAP_WIDTH];
@@ -213,6 +225,7 @@ Bitmap* g_emptyBucket = nullptr;
 Bitmap* g_fullBucket = nullptr;
 Bitmap* g_bombImage = nullptr;
 Bitmap* g_emergencyImage = nullptr;
+Bitmap* g_helperImage = nullptr;
 HFONT g_inventoryFont = nullptr;
 SolidBrush* g_overHeatBrush = nullptr;
 POINT g_mousePos = { 0, 0 };
@@ -313,6 +326,7 @@ void DrawVictoryScreen(Graphics* g);
 void DrawMenuButton(Graphics* g, const wchar_t* text, int x, int y, int w, int h);
 void DrawPauseMenu(Graphics* g);
 void DrawSettingsMenu(Graphics* g);
+void DrawControlsScreen(Graphics* g);
 void DrawGameStartOverlay(Graphics* g);
 bool IsWater(MapData* map, float x, float y) {
     if (x < 0 || y < 0 || x >= map->pixelW || y >= map->pixelH) return false;
@@ -381,6 +395,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
         g_fullBucket = new Bitmap(L"Image\\train\\waterbucket.png");  // 경로 채워줘
         g_bombImage = new Bitmap(L"Image\\train\\bomb.png");
         g_emergencyImage = new Bitmap(L"Image\\train\\emergemcy.png");
+        g_helperImage = new Bitmap(L"Image\\scene\\Helper.png");
         HDC hdc = GetDC(hWnd);
         game.memDC = CreateCompatibleDC(hdc);
         game.memBitmap = CreateCompatibleBitmap(hdc, SCREEN_WIDTH, SCREEN_HEIGHT);
@@ -412,6 +427,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
     {
         if (wParam == TIMER_ID) {
             if (game.gameState == STATE_START ||
+                game.gameState == STATE_CONTROLS ||
                 game.gameState == STATE_PAUSE_MENU ||
                 game.gameState == STATE_SETTINGS) {
                 InvalidateRect(hWnd, NULL, FALSE);
@@ -701,6 +717,23 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
                 g.DrawString(volStr, -1, &lf, PointF((REAL)(sx + sw + 6), (REAL)(sy - 2)), &sfL, &white);
             }
 
+            // 우상단 "조작법" 버튼 (Helper 이미지)
+            if (g_helperImage && g_helperImage->GetLastStatus() == Ok) {
+                g.DrawImage(g_helperImage, CTRL_BTN_LEFT, CTRL_BTN_TOP,
+                    CTRL_BTN_RIGHT - CTRL_BTN_LEFT, CTRL_BTN_BOTTOM - CTRL_BTN_TOP);
+            }
+            else {
+                DrawMenuButton(&g, L"조작법", CTRL_BTN_LEFT, CTRL_BTN_TOP,
+                    CTRL_BTN_RIGHT - CTRL_BTN_LEFT, CTRL_BTN_BOTTOM - CTRL_BTN_TOP);
+            }
+
+            BitBlt(hDC, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, game.memDC, 0, 0, SRCCOPY);
+            EndPaint(hWnd, &ps);
+            return 0;
+        }
+
+        if (game.gameState == STATE_CONTROLS) {
+            DrawControlsScreen(&g);
             BitBlt(hDC, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, game.memDC, 0, 0, SRCCOPY);
             EndPaint(hWnd, &ps);
             return 0;
@@ -825,6 +858,9 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
             else if (game.gameState == STATE_SETTINGS) {
                 game.gameState = STATE_PAUSE_MENU;
             }
+            else if (game.gameState == STATE_CONTROLS) {
+                game.gameState = STATE_START;
+            }
             InvalidateRect(hWnd, NULL, FALSE);
         }
         return 0;
@@ -846,6 +882,12 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
                 game.gameState = STATE_GAME_START;
                 InvalidateRect(hWnd, NULL, FALSE);
             }
+            // 우상단 "조작법" 버튼
+            else if (mx >= CTRL_BTN_LEFT && mx <= CTRL_BTN_RIGHT &&
+                     my >= CTRL_BTN_TOP  && my <= CTRL_BTN_BOTTOM) {
+                game.gameState = STATE_CONTROLS;
+                InvalidateRect(hWnd, NULL, FALSE);
+            }
             // 볼륨 슬라이더 (sx=1020, sy=672, sw=200, sh=10)
             else {
                 const int sx = 1020, sy = 672, sw = 200;
@@ -859,6 +901,14 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
                     ApplyVolume(vol);
                     InvalidateRect(hWnd, NULL, FALSE);
                 }
+            }
+        }
+        else if (game.gameState == STATE_CONTROLS) {
+            // "뒤로" 버튼
+            if (mx >= CTRL_BACK_LEFT && mx <= CTRL_BACK_RIGHT &&
+                my >= CTRL_BACK_TOP  && my <= CTRL_BACK_BOTTOM) {
+                game.gameState = STATE_START;
+                InvalidateRect(hWnd, NULL, FALSE);
             }
         }
         else if (game.gameState == STATE_PAUSE_MENU) {
@@ -944,6 +994,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
         g_bombImage = nullptr;
         delete g_emergencyImage;
         g_emergencyImage = nullptr;
+        delete g_helperImage;
+        g_helperImage = nullptr;
         if (g_inventoryFont) {
             DeleteObject(g_inventoryFont);
             g_inventoryFont = nullptr;
@@ -2633,6 +2685,81 @@ void DrawSettingsMenu(Graphics* g) {
 
     // back button
     DrawMenuButton(g, L"뒤로", bx + 20, by + 160, bw - 40, 50);
+}
+
+// 조작법 한 줄: [키]  [설명]
+static void DrawCtrlLine(Graphics* g, Font* keyFont, Font* descFont,
+    int x, int y, const wchar_t* key, const wchar_t* desc) {
+    static SolidBrush keyBrush(Color(255, 255, 215, 70));
+    static SolidBrush descBrush(Color(255, 235, 235, 235));
+    StringFormat sf;
+    g->DrawString(key, -1, keyFont, PointF((REAL)x, (REAL)y), &sf, &keyBrush);
+    g->DrawString(desc, -1, descFont, PointF((REAL)(x + 135), (REAL)y), &sf, &descBrush);
+}
+
+void DrawControlsScreen(Graphics* g) {
+    // 시작 이미지를 어둡게 깔고 그 위에 조작법 표시
+    g->Clear(Color(255, 18, 22, 28));
+    if (game.startScreenImage && game.startScreenImage->GetLastStatus() == Ok) {
+        g->DrawImage(game.startScreenImage, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+        SolidBrush dim(Color(210, 0, 0, 0));
+        g->FillRectangle(&dim, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+    }
+
+    FontFamily ff(L"맑은 고딕");
+    Font titleFont(&ff, 40, FontStyleBold, UnitPixel);
+    Font headFont(&ff, 24, FontStyleBold, UnitPixel);
+    Font keyFont(&ff, 18, FontStyleBold, UnitPixel);
+    Font descFont(&ff, 18, FontStyleRegular, UnitPixel);
+
+    SolidBrush white(Color(255, 255, 255, 255));
+    SolidBrush cyan(Color(255, 120, 200, 255));
+    SolidBrush gray(Color(255, 200, 200, 200));
+    StringFormat sfL;
+    StringFormat sfC; sfC.SetAlignment(StringAlignmentCenter);
+
+    // 제목
+    RectF titleRect(0.0f, 24.0f, (REAL)SCREEN_WIDTH, 56.0f);
+    g->DrawString(L"조작법", -1, &titleFont, titleRect, &sfC, &white);
+
+    const int lx = 130, rx = 690;
+    int y;
+
+    // 플레이어 1
+    g->DrawString(L"플레이어 1", -1, &headFont, PointF((REAL)lx, 110.0f), &sfL, &cyan);
+    y = 160;
+    DrawCtrlLine(g, &keyFont, &descFont, lx, y, L"W A S D", L"이동");          y += 40;
+    DrawCtrlLine(g, &keyFont, &descFont, lx, y, L"Q",       L"설치물 종류 변경"); y += 40;
+    DrawCtrlLine(g, &keyFont, &descFont, lx, y, L"R",       L"레일 방향 전환");   y += 40;
+    DrawCtrlLine(g, &keyFont, &descFont, lx, y, L"E",       L"설치하기");        y += 40;
+    DrawCtrlLine(g, &keyFont, &descFont, lx, y, L"F",       L"양동이 줍기 / 놓기");
+
+    // 플레이어 2
+    g->DrawString(L"플레이어 2", -1, &headFont, PointF((REAL)rx, 110.0f), &sfL, &cyan);
+    y = 160;
+    DrawCtrlLine(g, &keyFont, &descFont, rx, y, L"방향키", L"이동");           y += 40;
+    DrawCtrlLine(g, &keyFont, &descFont, rx, y, L"1",     L"설치물 종류 변경"); y += 40;
+    DrawCtrlLine(g, &keyFont, &descFont, rx, y, L"2",     L"레일 방향 전환");   y += 40;
+    DrawCtrlLine(g, &keyFont, &descFont, rx, y, L"3",     L"설치하기");        y += 40;
+    DrawCtrlLine(g, &keyFont, &descFont, rx, y, L"0",     L"양동이 줍기 / 놓기");
+
+    // 공통 / 시스템
+    g->DrawString(L"공통 / 시스템", -1, &headFont, PointF((REAL)lx, 400.0f), &sfL, &cyan);
+    y = 448;
+    DrawCtrlLine(g, &keyFont, &descFont, lx, y, L"ESC", L"일시정지 / 뒤로"); y += 40;
+    DrawCtrlLine(g, &keyFont, &descFont, lx, y, L"F2",  L"무한 레일 모드");  y += 40;
+    DrawCtrlLine(g, &keyFont, &descFont, lx, y, L"F3",  L"무한 자원 (과열 없음)");
+
+    // 자동 동작
+    g->DrawString(L"자동 동작", -1, &headFont, PointF((REAL)rx, 400.0f), &sfL, &cyan);
+    y = 448;
+    g->DrawString(L"• 물가에 가까이 가면 양동이 자동 충전", -1, &descFont, PointF((REAL)rx, (REAL)y), &sfL, &gray); y += 36;
+    g->DrawString(L"• 물 양동이로 기차에 닿으면 열 냉각",   -1, &descFont, PointF((REAL)rx, (REAL)y), &sfL, &gray); y += 36;
+    g->DrawString(L"• 레일이 거의 떨어지면 기차에 경고 표시", -1, &descFont, PointF((REAL)rx, (REAL)y), &sfL, &gray);
+
+    // 뒤로 버튼
+    DrawMenuButton(g, L"뒤로", CTRL_BACK_LEFT, CTRL_BACK_TOP,
+        CTRL_BACK_RIGHT - CTRL_BACK_LEFT, CTRL_BACK_BOTTOM - CTRL_BACK_TOP);
 }
 
 void DrawGameStartOverlay(Graphics* g) {

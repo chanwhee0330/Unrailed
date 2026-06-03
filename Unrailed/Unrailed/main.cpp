@@ -128,7 +128,11 @@ struct Rail {
     std::vector<RailData> rails;
     Bitmap* railImage;
     Bitmap* turnImage;
-    int8_t grid[MAP_HEIGHT][MAP_WIDTH]; // -1=없음, 0이상=RailDir
+    // 소유자별로 미리 색을 입혀둔 이미지 (매 프레임 ColorMatrix 비용 제거)
+    Bitmap* railP1; Bitmap* turnP1;
+    Bitmap* railP2; Bitmap* turnP2;
+    int8_t grid[MAP_HEIGHT][MAP_WIDTH];      // -1=없음, 0이상=RailDir
+    int8_t ownerGrid[MAP_HEIGHT][MAP_WIDTH]; // 0=없음, 1=P1, 2=P2
 };
 
 struct Obstacle {
@@ -229,6 +233,11 @@ Bitmap* g_helperImage = nullptr;
 HFONT g_inventoryFont = nullptr;
 SolidBrush* g_overHeatBrush = nullptr;
 POINT g_mousePos = { 0, 0 };
+// 전체화면 상태 + 백버퍼 출력 영역(마우스 좌표 변환용)
+bool g_fullscreen = false;
+RECT g_windowedRect = { 0, 0, 0, 0 };
+DWORD g_windowedStyle = 0;
+int g_presentX = 0, g_presentY = 0, g_presentW = SCREEN_WIDTH, g_presentH = SCREEN_HEIGHT;
 HINSTANCE g_hInst;
 LPCTSTR lpszClass = L"Window Class Name";
 LPCTSTR lpszWindowName = L"Unrailed";
@@ -280,7 +289,7 @@ bool HasVertical(Rail* rail, int tileX, int tileY);
 bool HasRail(Rail* rail, int tileX, int tileY);
 bool HasObstacle(int tileX, int tileY);
 bool HasBomb(int tileX, int tileY);
-bool CanPlaceRailAt(Rail* rail, int tileX, int tileY, RailDir dir);
+bool CanPlaceRailAt(Rail* rail, int tileX, int tileY, RailDir dir, int owner);
 bool CanPlaceObstacleAt(int tileX, int tileY);
 bool CanPlaceBombAt(int tileX, int tileY);
 bool PlaceObstacle(int tileX, int tileY, int owner);
@@ -293,8 +302,8 @@ void UpdateRailNeighbors(Rail* rail, int tileX, int tileY);
 bool PlaceRail(Rail* rail, int tileX, int tileY, RailDir dir, int owner);
 PlacementType GetNextPlacementType(Player* player, PlacementType placementType);
 bool PlaceSelectedItem(Player* player, PlacementType placementType, RailDir railDir, int owner);
-void DrawOneRailImage(Rail* rail, Graphics* g, float x, float y, RailDir dir, bool preview);
-void DrawRailPreview(Rail* rail, Graphics* g, int x, int y, RailDir dir);
+void DrawOneRailImage(Rail* rail, Graphics* g, float x, float y, RailDir dir, bool preview, int owner);
+void DrawRailPreview(Rail* rail, Graphics* g, int x, int y, RailDir dir, int owner);
 void DrawObstaclePreview(Graphics* g, int x, int y);
 void DrawBombIcon(Graphics* g, float x, float y, float size, BYTE alpha);
 void DrawBombPreview(Graphics* g, int x, int y);
@@ -338,6 +347,68 @@ bool IsWater(MapData* map, float x, float y) {
 void ApplyVolume(int vol) {
     DWORD v = (DWORD)(vol * 0xFFFF / 100);
     waveOutSetVolume(0, (v << 16) | v);
+}
+
+// 1280x720 백버퍼를 클라이언트 영역에 비율 유지(레터박스)로 늘려 출력
+void PresentBackBuffer(HWND hWnd, HDC hDC) {
+    RECT cr; GetClientRect(hWnd, &cr);
+    int cw = cr.right - cr.left;
+    int ch = cr.bottom - cr.top;
+    if (cw <= 0 || ch <= 0) return;
+
+    float sx = (float)cw / SCREEN_WIDTH;
+    float sy = (float)ch / SCREEN_HEIGHT;
+    float scale = (sx < sy) ? sx : sy;
+    int dw = (int)(SCREEN_WIDTH * scale + 0.5f);
+    int dh = (int)(SCREEN_HEIGHT * scale + 0.5f);
+    int dx = (cw - dw) / 2;
+    int dy = (ch - dh) / 2;
+    g_presentX = dx; g_presentY = dy; g_presentW = dw; g_presentH = dh;
+
+    // 레터박스(남는 영역) 검은색으로 채움
+    if (dx > 0 || dy > 0) {
+        HBRUSH black = (HBRUSH)GetStockObject(BLACK_BRUSH);
+        RECT full = { 0, 0, cw, ch };
+        FillRect(hDC, &full, black);
+    }
+
+    if (dw == SCREEN_WIDTH && dh == SCREEN_HEIGHT)
+        BitBlt(hDC, dx, dy, dw, dh, game.memDC, 0, 0, SRCCOPY); // 1:1이면 빠른 복사
+    else {
+        SetStretchBltMode(hDC, COLORONCOLOR);
+        StretchBlt(hDC, dx, dy, dw, dh, game.memDC, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, SRCCOPY);
+    }
+}
+
+// 클라이언트 마우스 좌표 → 1280x720 논리 좌표로 변환
+void MapMouseToLogical(int* mx, int* my) {
+    if (g_presentW > 0) *mx = (*mx - g_presentX) * SCREEN_WIDTH / g_presentW;
+    if (g_presentH > 0) *my = (*my - g_presentY) * SCREEN_HEIGHT / g_presentH;
+}
+
+void ToggleFullscreen(HWND hWnd) {
+    g_fullscreen = !g_fullscreen;
+    if (g_fullscreen) {
+        g_windowedStyle = GetWindowLong(hWnd, GWL_STYLE);
+        GetWindowRect(hWnd, &g_windowedRect);
+        MONITORINFO mi = { sizeof(mi) };
+        GetMonitorInfo(MonitorFromWindow(hWnd, MONITOR_DEFAULTTONEAREST), &mi);
+        SetWindowLong(hWnd, GWL_STYLE, WS_POPUP | WS_VISIBLE);
+        SetWindowPos(hWnd, HWND_TOP,
+            mi.rcMonitor.left, mi.rcMonitor.top,
+            mi.rcMonitor.right - mi.rcMonitor.left,
+            mi.rcMonitor.bottom - mi.rcMonitor.top,
+            SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+    }
+    else {
+        SetWindowLong(hWnd, GWL_STYLE, g_windowedStyle);
+        SetWindowPos(hWnd, HWND_TOP,
+            g_windowedRect.left, g_windowedRect.top,
+            g_windowedRect.right - g_windowedRect.left,
+            g_windowedRect.bottom - g_windowedRect.top,
+            SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+    }
+    InvalidateRect(hWnd, NULL, TRUE);
 }
 
 LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) {
@@ -529,11 +600,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
                 }
                 game.f2KeyPrev = f2Key;
 
-                bool f3Key = GetAsyncKeyState(VK_F3) & 0x8000;
-                if (f3Key && !game.f3KeyPrev) {
-                    game.infiniteResourceMode = !game.infiniteResourceMode;
-                }
-                game.f3KeyPrev = f3Key;
+                // F3(무한 자원 모드)는 WM_KEYDOWN에서 토글 처리
 
                 // place selected item
                 bool eKey = GetAsyncKeyState('E') & 0x8000;
@@ -729,14 +796,14 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
                     CTRL_BTN_RIGHT - CTRL_BTN_LEFT, CTRL_BTN_BOTTOM - CTRL_BTN_TOP);
             }
 
-            BitBlt(hDC, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, game.memDC, 0, 0, SRCCOPY);
+            PresentBackBuffer(hWnd, hDC);
             EndPaint(hWnd, &ps);
             return 0;
         }
 
         if (game.gameState == STATE_CONTROLS) {
             DrawControlsScreen(&g);
-            BitBlt(hDC, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, game.memDC, 0, 0, SRCCOPY);
+            PresentBackBuffer(hWnd, hDC);
             EndPaint(hWnd, &ps);
             return 0;
         }
@@ -746,6 +813,11 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
 
         // top screen
         Graphics g1(game.memDC);
+        // 빠른 렌더링 모드 (기본 고품질 보간 대신 최저 비용) — 끊김 완화
+        g1.SetInterpolationMode(InterpolationModeNearestNeighbor);
+        g1.SetPixelOffsetMode(PixelOffsetModeHalf);
+        g1.SetSmoothingMode(SmoothingModeNone);
+        g1.SetCompositingQuality(CompositingQualityHighSpeed);
         g1.SetClip(Rect(0, 0, SCREEN_WIDTH, halfH));
         g1.Clear(Color(255, 255, 255));
         g1.TranslateTransform(-game.cam1.x, -game.cam1.y);
@@ -786,6 +858,10 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
 
         // bottom screen
         Graphics g2(game.memDC);
+        g2.SetInterpolationMode(InterpolationModeNearestNeighbor);
+        g2.SetPixelOffsetMode(PixelOffsetModeHalf);
+        g2.SetSmoothingMode(SmoothingModeNone);
+        g2.SetCompositingQuality(CompositingQualityHighSpeed);
         g2.SetClip(Rect(0, halfH, SCREEN_WIDTH, halfH));
         g2.TranslateTransform(0, (REAL)halfH);
         g2.TranslateTransform(-game.cam2.x, -game.cam2.y);
@@ -843,13 +919,27 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
 
         Pen pen(Color(255, 0, 0, 0), 5);
         g.DrawLine(&pen, 0, halfH, SCREEN_WIDTH, halfH);
-        BitBlt(hDC, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, game.memDC, 0, 0, SRCCOPY);
+        PresentBackBuffer(hWnd, hDC);
 
         EndPaint(hWnd, &ps);
         return 0;
     }
 
+    case WM_ERASEBKGND:
+        return 1; // 배경 지우기 생략 (전체화면 전환 시 깜빡임 방지)
+
     case WM_KEYDOWN:
+        if (wParam == VK_F11) {
+            ToggleFullscreen(hWnd);
+            return 0;
+        }
+        if (wParam == VK_F3) {
+            if (!(lParam & 0x40000000)) { // 키 반복(꾹 누름) 무시
+                game.infiniteResourceMode = !game.infiniteResourceMode;
+                InvalidateRect(hWnd, NULL, FALSE);
+            }
+            return 0;
+        }
         if (wParam == VK_ESCAPE) {
             if (game.gameState == STATE_PLAYING) {
                 game.gameState = STATE_PAUSE_MENU;
@@ -871,6 +961,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
     {
         int mx = LOWORD(lParam);
         int my = HIWORD(lParam);
+        MapMouseToLogical(&mx, &my); // 화면 좌표 → 논리 좌표
 
         if (game.gameState == STATE_START) {
             // 게임시작 버튼
@@ -955,12 +1046,15 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
 
     case WM_MOUSEMOVE:
     {
-        g_mousePos = { (LONG)LOWORD(lParam), (LONG)HIWORD(lParam) };
+        int mmx = (int)(SHORT)LOWORD(lParam);
+        int mmy = (int)(SHORT)HIWORD(lParam);
+        MapMouseToLogical(&mmx, &mmy); // 화면 좌표 → 논리 좌표
+        g_mousePos = { (LONG)mmx, (LONG)mmy };
         if (game.volDragging) {
             // 슬라이더 트랙 위치: 시작화면 sx=1020 sw=200 / 설정화면 sx=520 sw=290
             int sx = (game.gameState == STATE_START) ? 1020 : 520;
             int sw = (game.gameState == STATE_START) ? 200  : 290;
-            int vol = ((int)(SHORT)LOWORD(lParam) - sx) * 100 / sw;
+            int vol = (mmx - sx) * 100 / sw;
             if (vol < 0) vol = 0;
             if (vol > 100) vol = 100;
             game.volume = vol;
@@ -1676,15 +1770,41 @@ void DrawInventory(Player* p, HDC hdc, Camera cam, int offsetY) {
     SetBkMode(hdc, oldBkMode);
 }
 
+// 원본 이미지에 색 틴트를 입힌 새 비트맵을 생성 (로드 시 1회만 호출)
+static Bitmap* CreateTintedRailBitmap(Bitmap* src, float r, float g, float b) {
+    int w = src->GetWidth(), h = src->GetHeight();
+    Bitmap* dst = new Bitmap(w, h, PixelFormat32bppARGB);
+    Graphics gr(dst);
+    gr.Clear(Color(0, 0, 0, 0));
+    ColorMatrix cm = {
+        r, 0, 0, 0, 0,
+        0, g, 0, 0, 0,
+        0, 0, b, 0, 0,
+        0, 0, 0, 1, 0,
+        0, 0, 0, 0, 1 };
+    ImageAttributes ia;
+    ia.SetColorMatrix(&cm);
+    gr.DrawImage(src, RectF(0, 0, (REAL)w, (REAL)h), 0, 0, (REAL)w, (REAL)h, UnitPixel, &ia);
+    return dst;
+}
+
 void InitRail(Rail* rail) {
     rail->railImage = new Bitmap(L"Image\\train\\rail.png");
     rail->turnImage = new Bitmap(L"Image\\train\\turn rail.png");
+    // P1=붉은빛, P2=푸른빛 틴트 이미지를 미리 만들어 둠
+    rail->railP1 = CreateTintedRailBitmap(rail->railImage, 1.0f, 0.55f, 0.5f);
+    rail->turnP1 = CreateTintedRailBitmap(rail->turnImage, 1.0f, 0.55f, 0.5f);
+    rail->railP2 = CreateTintedRailBitmap(rail->railImage, 0.5f, 0.7f, 1.0f);
+    rail->turnP2 = CreateTintedRailBitmap(rail->turnImage, 0.5f, 0.7f, 1.0f);
     memset(rail->grid, -1, sizeof(rail->grid));
+    memset(rail->ownerGrid, 0, sizeof(rail->ownerGrid));
 }
 
 void ReleaseRail(Rail* rail) {
     delete rail->railImage;
     delete rail->turnImage;
+    delete rail->railP1; delete rail->turnP1;
+    delete rail->railP2; delete rail->turnP2;
     rail->rails.clear();
 }
 
@@ -1703,6 +1823,22 @@ bool HasRail(Rail* rail, int tileX, int tileY) {
     return rail->grid[tileY][tileX] >= 0;
 }
 
+// 특정 소유자(owner)의 레일만 인식하는 버전 — 플레이어/기차별 레일 분리에 사용
+bool HasRailOwner(Rail* rail, int tileX, int tileY, int owner) {
+    if (tileX < 0 || tileY < 0 || tileX >= MAP_WIDTH || tileY >= MAP_HEIGHT) return false;
+    return rail->grid[tileY][tileX] >= 0 && rail->ownerGrid[tileY][tileX] == (int8_t)owner;
+}
+
+bool HasHorizontalOwner(Rail* rail, int tileX, int tileY, int owner) {
+    if (tileX < 0 || tileY < 0 || tileX >= MAP_WIDTH || tileY >= MAP_HEIGHT) return false;
+    return rail->grid[tileY][tileX] == (int8_t)RAIL_HORIZONTAL && rail->ownerGrid[tileY][tileX] == (int8_t)owner;
+}
+
+bool HasVerticalOwner(Rail* rail, int tileX, int tileY, int owner) {
+    if (tileX < 0 || tileY < 0 || tileX >= MAP_WIDTH || tileY >= MAP_HEIGHT) return false;
+    return rail->grid[tileY][tileX] == (int8_t)RAIL_VERTICAL && rail->ownerGrid[tileY][tileX] == (int8_t)owner;
+}
+
 bool HasObstacle(int tileX, int tileY) {
     if (tileX < 0 || tileY < 0 || tileX >= MAP_WIDTH || tileY >= MAP_HEIGHT) return false;
     return game.obstacleGrid[tileY][tileX];
@@ -1715,15 +1851,16 @@ bool HasBomb(int tileX, int tileY) {
     return false;
 }
 
-bool CanPlaceRailAt(Rail* rail, int tileX, int tileY, RailDir dir) {
+bool CanPlaceRailAt(Rail* rail, int tileX, int tileY, RailDir dir, int owner) {
     if (tileX < 0 || tileY < 0 || tileX >= MAP_WIDTH || tileY >= MAP_HEIGHT) return false;
     if (HasRail(rail, tileX, tileY) || HasObstacle(tileX, tileY)) return false;
 
+    // 수직 충돌 검사는 같은 소유자의 레일만 고려 (상대 레일과는 무관하게 설치 가능)
     if (dir == RAIL_HORIZONTAL) {
-        if (HasVertical(rail, tileX, tileY - 1) || HasVertical(rail, tileX, tileY + 1)) return false;
+        if (HasVerticalOwner(rail, tileX, tileY - 1, owner) || HasVerticalOwner(rail, tileX, tileY + 1, owner)) return false;
     }
     if (dir == RAIL_VERTICAL) {
-        if (HasHorizontal(rail, tileX - 1, tileY) || HasHorizontal(rail, tileX + 1, tileY)) return false;
+        if (HasHorizontalOwner(rail, tileX - 1, tileY, owner) || HasHorizontalOwner(rail, tileX + 1, tileY, owner)) return false;
     }
 
     return true;
@@ -1855,48 +1992,59 @@ RailDir GetRailDir(Rail* rail, int tileX, int tileY) {
     return (v >= 0) ? (RailDir)v : RAIL_HORIZONTAL;
 }
 
-RailDir AutoDetectRailDir(Rail* rail, int tileX, int tileY, RailDir baseDir) {
-    bool left = HasRail(rail, tileX - 1, tileY);
-    bool right = HasRail(rail, tileX + 1, tileY);
-    bool up = HasRail(rail, tileX, tileY - 1);
-    bool down = HasRail(rail, tileX, tileY + 1);
+RailDir AutoDetectRailDir(Rail* rail, int tileX, int tileY, RailDir baseDir, int owner) {
+    bool left = HasRailOwner(rail, tileX - 1, tileY, owner);
+    bool right = HasRailOwner(rail, tileX + 1, tileY, owner);
+    bool up = HasRailOwner(rail, tileX, tileY - 1, owner);
+    bool down = HasRailOwner(rail, tileX, tileY + 1, owner);
 
-    if (baseDir == RAIL_VERTICAL) {
-        if (right && (up || down)) return RAIL_TURN_RD;
-        if (left && (up || down)) return RAIL_TURN_LD;
-        return RAIL_VERTICAL;
+    bool horiz = left || right;
+    bool vert = up || down;
+
+    // 가로 이웃과 세로 이웃이 동시에 있으면 코너(턴) — 연결되는 두 방향으로 정확히 판별
+    if (horiz && vert) {
+        if (right && down) return RAIL_TURN_RD;
+        if (left && down)  return RAIL_TURN_LD;
+        if (right && up)   return RAIL_TURN_RU;
+        if (left && up)    return RAIL_TURN_LU;
     }
-    if (down && (left || right)) return baseDir == RAIL_HORIZONTAL && right ? RAIL_TURN_RD : RAIL_TURN_LD;
-    if (up && (left || right)) return baseDir == RAIL_HORIZONTAL && right ? RAIL_TURN_RU : RAIL_TURN_LU;
-    return baseDir;
+
+    // 직선: 이웃 방향에 맞춰 결정
+    if (vert && !horiz) return RAIL_VERTICAL;
+    if (horiz && !vert) return RAIL_HORIZONTAL;
+
+    // 이웃이 없으면 플레이어가 고른 방향 유지 (턴 값이면 가로로 환원)
+    if (baseDir == RAIL_VERTICAL) return RAIL_VERTICAL;
+    return RAIL_HORIZONTAL;
 }
 
 void UpdateRailNeighbors(Rail* rail, int tileX, int tileY) {
     int dx[] = { -1, 1, 0, 0 };
     int dy[] = { 0, 0, -1, 1 };
 
+    // 그리드로 O(1) 조회 (전체 레일 벡터 스캔 제거)
     for (int i = 0; i < 4; i++) {
         int nx = tileX + dx[i];
         int ny = tileY + dy[i];
-        for (int j = 0; j < (int)rail->rails.size(); j++) {
-            if (rail->rails[j].tileX == nx && rail->rails[j].tileY == ny) {
-                rail->rails[j].dir = AutoDetectRailDir(rail, nx, ny, rail->rails[j].dir);
-                rail->grid[ny][nx] = (int8_t)rail->rails[j].dir;
-            }
-        }
+        if (nx < 0 || ny < 0 || nx >= MAP_WIDTH || ny >= MAP_HEIGHT) continue;
+        if (rail->grid[ny][nx] < 0) continue; // 레일 없음
+        int o = rail->ownerGrid[ny][nx];
+        RailDir nd = AutoDetectRailDir(rail, nx, ny, (RailDir)rail->grid[ny][nx], o);
+        rail->grid[ny][nx] = (int8_t)nd;
     }
 }
 
 bool PlaceRail(Rail* rail, int tileX, int tileY, RailDir dir, int owner) {
-    if (!CanPlaceRailAt(rail, tileX, tileY, dir)) return false;
+    if (!CanPlaceRailAt(rail, tileX, tileY, dir, owner)) return false;
 
     RailData data;
     data.tileX = tileX;
     data.tileY = tileY;
-    data.dir = AutoDetectRailDir(rail, tileX, tileY, dir);
+    data.dir = AutoDetectRailDir(rail, tileX, tileY, dir, owner);
     data.owner = owner;
     rail->rails.push_back(data);
     rail->grid[tileY][tileX] = (int8_t)data.dir;
+    rail->ownerGrid[tileY][tileX] = (int8_t)owner;
     UpdateRailNeighbors(rail, tileX, tileY);
     return true;
 }
@@ -1952,12 +2100,17 @@ bool PlaceSelectedItem(Player* player, PlacementType placementType, RailDir rail
     return true;
 }
 
-void DrawOneRailImage(Rail* rail, Graphics* g, float x, float y, RailDir dir, bool preview) {
+void DrawOneRailImage(Rail* rail, Graphics* g, float x, float y, RailDir dir, bool preview, int owner) {
     GraphicsState state = g->Save();
     g->TranslateTransform(x + TILE_SIZE / 2.0f, y + TILE_SIZE / 2.0f);
 
     bool isTurn = (dir == RAIL_TURN_RD || dir == RAIL_TURN_LD || dir == RAIL_TURN_RU || dir == RAIL_TURN_LU);
-    Bitmap* img = isTurn ? rail->turnImage : rail->railImage;
+
+    // 소유자별로 미리 틴트해 둔 이미지 선택
+    Bitmap* img;
+    if (owner == 1) img = isTurn ? rail->turnP1 : rail->railP1;
+    else if (owner == 2) img = isTurn ? rail->turnP2 : rail->railP2;
+    else img = isTurn ? rail->turnImage : rail->railImage;
 
     if (dir == RAIL_VERTICAL) g->RotateTransform(90);
     else if (dir == RAIL_TURN_LD) g->RotateTransform(90);
@@ -1965,6 +2118,7 @@ void DrawOneRailImage(Rail* rail, Graphics* g, float x, float y, RailDir dir, bo
     else if (dir == RAIL_TURN_RU) g->RotateTransform(270);
 
     if (preview) {
+        // 미리보기만 반투명 처리 (프레임당 1~2개라 비용 무시 가능)
         ColorMatrix cm = { 1,0,0,0,0, 0,1,0,0,0, 0,0,1,0,0, 0,0,0,0.5f,0, 0,0,0,0,1 };
         ImageAttributes ia;
         ia.SetColorMatrix(&cm);
@@ -1972,14 +2126,15 @@ void DrawOneRailImage(Rail* rail, Graphics* g, float x, float y, RailDir dir, bo
             0, 0, (float)img->GetWidth(), (float)img->GetHeight(), UnitPixel, &ia);
     }
     else {
+        // 설치된 레일은 빠른 단순 블릿
         g->DrawImage(img, -TILE_SIZE / 2.0f, -TILE_SIZE / 2.0f, (float)TILE_SIZE, (float)TILE_SIZE);
     }
 
     g->Restore(state);
 }
 
-void DrawRailPreview(Rail* rail, Graphics* g, int x, int y, RailDir dir) {
-    DrawOneRailImage(rail, g, (float)x, (float)y, dir, true);
+void DrawRailPreview(Rail* rail, Graphics* g, int x, int y, RailDir dir, int owner) {
+    DrawOneRailImage(rail, g, (float)x, (float)y, dir, true, owner);
 }
 
 void DrawObstaclePreview(Graphics* g, int x, int y) {
@@ -2026,7 +2181,7 @@ void DrawPlacementPreview(Graphics* g, Player* player, PlacementType placementTy
     bool hasRailItem = game.infiniteRailMode || game.infiniteResourceMode || player->railCount > 0;
     bool hasObstacleItem = game.infiniteResourceMode || player->obstacleCount > 0;
     bool hasBombItem = game.infiniteResourceMode || player->bombCount > 0;
-    bool canPlaceRail = hasRailItem && CanPlaceRailAt(&game.rail, tileX, tileY, railDir);
+    bool canPlaceRail = hasRailItem && CanPlaceRailAt(&game.rail, tileX, tileY, railDir, player->id);
     bool canPlaceObstacle = hasObstacleItem && CanPlaceObstacleAt(tileX, tileY);
     bool canPlaceBomb = hasBombItem && CanPlaceBombAt(tileX, tileY);
 
@@ -2041,7 +2196,7 @@ void DrawPlacementPreview(Graphics* g, Player* player, PlacementType placementTy
     SolidBrush previewBrush(previewColor);
     g->FillRectangle(&previewBrush, (float)preX, (float)preY, (float)TILE_SIZE, (float)TILE_SIZE);
 
-    if (placementType == PLACEMENT_RAIL) DrawRailPreview(&game.rail, g, preX, preY, railDir);
+    if (placementType == PLACEMENT_RAIL) DrawRailPreview(&game.rail, g, preX, preY, railDir, player->id);
     else if (placementType == PLACEMENT_OBSTACLE) DrawObstaclePreview(g, preX, preY);
     else DrawBombPreview(g, preX, preY);
 }
@@ -2053,11 +2208,15 @@ void DrawRails(Rail* rail, Graphics* g, Camera cam, int viewW, int viewH) {
     const float bottom = cam.y + viewH + TILE_SIZE;
 
     for (int i = 0; i < (int)rail->rails.size(); i++) {
-        float x = (float)(rail->rails[i].tileX * TILE_SIZE);
-        float y = (float)(rail->rails[i].tileY * TILE_SIZE);
+        int tx = rail->rails[i].tileX;
+        int ty = rail->rails[i].tileY;
+        float x = (float)(tx * TILE_SIZE);
+        float y = (float)(ty * TILE_SIZE);
 
         if (x > right || x + TILE_SIZE < left || y > bottom || y + TILE_SIZE < top) continue;
-        DrawOneRailImage(rail, g, x, y, rail->rails[i].dir, false);
+        // 방향은 그리드에서 읽음 (이웃 갱신으로 최신 상태 유지)
+        RailDir dir = (RailDir)rail->grid[ty][tx];
+        DrawOneRailImage(rail, g, x, y, dir, false, rail->rails[i].owner);
     }
 }
 
@@ -2221,16 +2380,17 @@ static void StepRailDir(RailDir rd, float& dx, float& dy) {
 
 // 기차 진행 방향으로 커브를 따라가며 앞에 남은 레일 타일 수를 센다 (현재 타일 제외)
 int CountRailsAhead(Train* train, Rail* rail, int maxCount) {
+    int owner = (train == &game.train1) ? 1 : 2;
     int tx = (int)((train->pos.x + TRAIN_WIDTH / 2.0f) / TILE_SIZE);
     int ty = (int)((train->pos.y + TRAIN_HEIGHT / 2.0f) / TILE_SIZE);
     float dx = train->dirX, dy = train->dirY;
-    if (HasRail(rail, tx, ty)) StepRailDir(GetRailDir(rail, tx, ty), dx, dy);
+    if (HasRailOwner(rail, tx, ty, owner)) StepRailDir(GetRailDir(rail, tx, ty), dx, dy);
 
     int count = 0;
     while (count < maxCount) {
         int nx = tx + (dx > 0 ? 1 : (dx < 0 ? -1 : 0));
         int ny = ty + (dy > 0 ? 1 : (dy < 0 ? -1 : 0));
-        if (!HasRail(rail, nx, ny)) break;
+        if (!HasRailOwner(rail, nx, ny, owner)) break;
         tx = nx; ty = ny;
         StepRailDir(GetRailDir(rail, tx, ty), dx, dy);
         count++;
@@ -2277,7 +2437,7 @@ void UpdateTrain(Train* train, Rail* rail, float deltaTime) {
         return;
     }
 
-    if (HasRail(rail, tileX, tileY)) {
+    if (HasRailOwner(rail, tileX, tileY, owner)) {
         UpdateTrainDirection(train, GetRailDir(rail, tileX, tileY));
         train->pos.x += train->speed * train->dirX * deltaTime;
         train->pos.y += train->speed * train->dirY * deltaTime;

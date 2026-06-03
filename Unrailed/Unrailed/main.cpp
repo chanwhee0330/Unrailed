@@ -19,8 +19,8 @@ using namespace Gdiplus;
 
 #define SCREEN_WIDTH 1280
 #define SCREEN_HEIGHT 720
-#define MAP_WIDTH 90
-#define MAP_HEIGHT 60
+#define MAP_WIDTH 60
+#define MAP_HEIGHT 30
 #define TILE_SIZE 32
 #define BASE_WIDTH_TILES 10
 #define BASE_HEIGHT_TILES 10
@@ -369,8 +369,10 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
         game.selectedDir2 = RAIL_HORIZONTAL;
         game.selectedPlacement1 = PLACEMENT_RAIL;
         game.selectedPlacement2 = PLACEMENT_RAIL;
-        game.bucket1 = { {400, 400}, false };
-        game.bucket2 = { {2400, 1500}, false };
+        BaseArea base1 = GetBaseArea(0);
+        BaseArea base2 = GetBaseArea(1);
+        game.bucket1 = { {(float)(base1.x + 400), (float)(base1.y + 112)}, false };
+        game.bucket2 = { {(float)(base2.x - 160), (float)(base2.y + 124)}, false };
         game.fKeyPrev = false;
         game.eKeyPrev = false;
         game.threeKeyPrev = false;
@@ -386,8 +388,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
             DEFAULT_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Arial");
         g_overHeatBrush = new SolidBrush(Color(120, 255, 0, 0));
 
-        InitPlayer(&game.p1, 1, 300, 400);
-        InitPlayer(&game.p2, 2, 2500, 1500);
+        InitPlayer(&game.p1, 1, (float)(base1.x + 300), (float)(base1.y + 112));
+        InitPlayer(&game.p2, 2, (float)(base2.x - 60), (float)(base2.y + 124));
         InitMap(&game.map);
         LoadMapCsv(&game.map, L"Image\\Map\\unTiled map_Tile Layer 1.csv");
         InitRail(&game.rail);
@@ -402,8 +404,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
         game.oldBitmap = (HBITMAP)SelectObject(game.memDC, game.memBitmap);
         ReleaseDC(hWnd, hdc);
 
-        InitTrain(&game.train1, 64, 424, 1, L"Image\\train\\locomoto.png");
-        InitTrain(&game.train2, 2720, 1512, -1, L"Image\\train\\locomoto2.png");
+        InitTrain(&game.train1, (float)(base1.x + 64), (float)(base1.y + 136), 1, L"Image\\train\\locomoto.png");
+        InitTrain(&game.train2, (float)(base2.x + 160), (float)(base2.y + 136), -1, L"Image\\train\\locomoto2.png");
 
         game.cam1 = { 0, 0 };
         game.cam2 = { 0, 0 };
@@ -1099,7 +1101,7 @@ void InitMap(MapData* map) {
         }
     }
 
-    map->image = new Bitmap(L"Image\\Map\\UnrailedMap.png");
+    map->image = new Bitmap(L"Image\\Map\\newUnrailedmap.png");
     BuildCollisionCache(map);
 }
 
@@ -1156,7 +1158,7 @@ BaseArea GetBaseArea(int index) {
     }
     else {
         base.x = (MAP_WIDTH - BASE_WIDTH_TILES) * TILE_SIZE;
-        base.y = 43 * TILE_SIZE;
+        base.y = (MAP_HEIGHT - BASE_HEIGHT_TILES - 7) * TILE_SIZE;
         base.doorOnRight = false;
     }
 

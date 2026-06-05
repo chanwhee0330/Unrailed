@@ -128,9 +128,9 @@ struct Rail {
     std::vector<RailData> rails;
     Bitmap* railImage;
     Bitmap* turnImage;
-    // 소유자별로 미리 색을 입혀둔 이미지 (매 프레임 ColorMatrix 비용 제거)
-    Bitmap* railP1; Bitmap* turnP1;
-    Bitmap* railP2; Bitmap* turnP2;
+    // 소유자(0=중립,1,2) × 방향(RailDir 6종)별로 회전·틴트까지 미리 구워둔 32x32 이미지
+    // → 매 프레임 Save/Restore/Rotate 없이 단순 1장 그리기만 하면 됨
+    Bitmap* variant[3][6];
     int8_t grid[MAP_HEIGHT][MAP_WIDTH];      // -1=없음, 0이상=RailDir
     int8_t ownerGrid[MAP_HEIGHT][MAP_WIDTH]; // 0=없음, 1=P1, 2=P2
 };
@@ -1771,11 +1771,14 @@ void DrawInventory(Player* p, HDC hdc, Camera cam, int offsetY) {
 }
 
 // 원본 이미지에 색 틴트를 입힌 새 비트맵을 생성 (로드 시 1회만 호출)
-static Bitmap* CreateTintedRailBitmap(Bitmap* src, float r, float g, float b) {
-    int w = src->GetWidth(), h = src->GetHeight();
-    Bitmap* dst = new Bitmap(w, h, PixelFormat32bppARGB);
+// 원본 이미지를 회전(rotDeg) + 색 틴트해서 TILE_SIZE x TILE_SIZE 비트맵으로 구움 (로드 시 1회)
+static Bitmap* CreateRailVariant(Bitmap* src, float r, float g, float b, int rotDeg) {
+    Bitmap* dst = new Bitmap(TILE_SIZE, TILE_SIZE, PixelFormat32bppARGB);
     Graphics gr(dst);
     gr.Clear(Color(0, 0, 0, 0));
+    gr.SetInterpolationMode(InterpolationModeHighQualityBicubic); // 1회뿐이라 고품질 OK
+    gr.TranslateTransform(TILE_SIZE / 2.0f, TILE_SIZE / 2.0f);
+    gr.RotateTransform((REAL)rotDeg);
     ColorMatrix cm = {
         r, 0, 0, 0, 0,
         0, g, 0, 0, 0,
@@ -1784,18 +1787,32 @@ static Bitmap* CreateTintedRailBitmap(Bitmap* src, float r, float g, float b) {
         0, 0, 0, 0, 1 };
     ImageAttributes ia;
     ia.SetColorMatrix(&cm);
-    gr.DrawImage(src, RectF(0, 0, (REAL)w, (REAL)h), 0, 0, (REAL)w, (REAL)h, UnitPixel, &ia);
+    gr.DrawImage(src, RectF(-TILE_SIZE / 2.0f, -TILE_SIZE / 2.0f, (REAL)TILE_SIZE, (REAL)TILE_SIZE),
+        0, 0, (REAL)src->GetWidth(), (REAL)src->GetHeight(), UnitPixel, &ia);
     return dst;
 }
 
 void InitRail(Rail* rail) {
     rail->railImage = new Bitmap(L"Image\\train\\rail.png");
     rail->turnImage = new Bitmap(L"Image\\train\\turn rail.png");
-    // P1=붉은빛, P2=푸른빛 틴트 이미지를 미리 만들어 둠
-    rail->railP1 = CreateTintedRailBitmap(rail->railImage, 1.0f, 0.55f, 0.5f);
-    rail->turnP1 = CreateTintedRailBitmap(rail->turnImage, 1.0f, 0.55f, 0.5f);
-    rail->railP2 = CreateTintedRailBitmap(rail->railImage, 0.5f, 0.7f, 1.0f);
-    rail->turnP2 = CreateTintedRailBitmap(rail->turnImage, 0.5f, 0.7f, 1.0f);
+
+    // 소유자별 색 (0=중립, 1=P1 붉은빛, 2=P2 푸른빛)
+    float tints[3][3] = {
+        { 1.0f, 1.0f,  1.0f },
+        { 1.0f, 0.55f, 0.5f },
+        { 0.5f, 0.7f,  1.0f },
+    };
+    // 방향별 회전각은 아래에서 직접 지정 (기존 DrawOneRailImage 회전 규칙과 동일)
+    for (int o = 0; o < 3; o++) {
+        float r = tints[o][0], g = tints[o][1], b = tints[o][2];
+        rail->variant[o][RAIL_HORIZONTAL] = CreateRailVariant(rail->railImage, r, g, b, 0);
+        rail->variant[o][RAIL_VERTICAL]   = CreateRailVariant(rail->railImage, r, g, b, 90);
+        rail->variant[o][RAIL_TURN_RD]    = CreateRailVariant(rail->turnImage, r, g, b, 0);
+        rail->variant[o][RAIL_TURN_LD]    = CreateRailVariant(rail->turnImage, r, g, b, 90);
+        rail->variant[o][RAIL_TURN_LU]    = CreateRailVariant(rail->turnImage, r, g, b, 180);
+        rail->variant[o][RAIL_TURN_RU]    = CreateRailVariant(rail->turnImage, r, g, b, 270);
+    }
+
     memset(rail->grid, -1, sizeof(rail->grid));
     memset(rail->ownerGrid, 0, sizeof(rail->ownerGrid));
 }
@@ -1803,8 +1820,9 @@ void InitRail(Rail* rail) {
 void ReleaseRail(Rail* rail) {
     delete rail->railImage;
     delete rail->turnImage;
-    delete rail->railP1; delete rail->turnP1;
-    delete rail->railP2; delete rail->turnP2;
+    for (int o = 0; o < 3; o++)
+        for (int d = 0; d < 6; d++)
+            delete rail->variant[o][d];
     rail->rails.clear();
 }
 
@@ -2001,7 +2019,12 @@ RailDir AutoDetectRailDir(Rail* rail, int tileX, int tileY, RailDir baseDir, int
     bool horiz = left || right;
     bool vert = up || down;
 
-    // 가로 이웃과 세로 이웃이 동시에 있으면 코너(턴) — 연결되는 두 방향으로 정확히 판별
+    // 이미 양옆(또는 위아래)이 모두 연결된 '관통' 레일은 직선 유지 — 턴으로 바꾸지 않음
+    // (직선 위에 수직 레일을 놔도 선이 꺾여 망가지지 않도록)
+    if (left && right) return RAIL_HORIZONTAL;
+    if (up && down)    return RAIL_VERTICAL;
+
+    // 가로 한쪽 + 세로 한쪽이면 코너(턴) — 연결되는 두 방향으로 정확히 판별
     if (horiz && vert) {
         if (right && down) return RAIL_TURN_RD;
         if (left && down)  return RAIL_TURN_LD;
@@ -2101,36 +2124,22 @@ bool PlaceSelectedItem(Player* player, PlacementType placementType, RailDir rail
 }
 
 void DrawOneRailImage(Rail* rail, Graphics* g, float x, float y, RailDir dir, bool preview, int owner) {
-    GraphicsState state = g->Save();
-    g->TranslateTransform(x + TILE_SIZE / 2.0f, y + TILE_SIZE / 2.0f);
-
-    bool isTurn = (dir == RAIL_TURN_RD || dir == RAIL_TURN_LD || dir == RAIL_TURN_RU || dir == RAIL_TURN_LU);
-
-    // 소유자별로 미리 틴트해 둔 이미지 선택
-    Bitmap* img;
-    if (owner == 1) img = isTurn ? rail->turnP1 : rail->railP1;
-    else if (owner == 2) img = isTurn ? rail->turnP2 : rail->railP2;
-    else img = isTurn ? rail->turnImage : rail->railImage;
-
-    if (dir == RAIL_VERTICAL) g->RotateTransform(90);
-    else if (dir == RAIL_TURN_LD) g->RotateTransform(90);
-    else if (dir == RAIL_TURN_LU) g->RotateTransform(180);
-    else if (dir == RAIL_TURN_RU) g->RotateTransform(270);
+    int o = (owner == 1 || owner == 2) ? owner : 0;
+    int d = (dir >= 0 && dir < 6) ? (int)dir : 0;
+    Bitmap* img = rail->variant[o][d]; // 회전·틴트까지 이미 구워진 이미지
 
     if (preview) {
-        // 미리보기만 반투명 처리 (프레임당 1~2개라 비용 무시 가능)
+        // 미리보기만 반투명 (프레임당 1~2개라 비용 무시 가능)
         ColorMatrix cm = { 1,0,0,0,0, 0,1,0,0,0, 0,0,1,0,0, 0,0,0,0.5f,0, 0,0,0,0,1 };
         ImageAttributes ia;
         ia.SetColorMatrix(&cm);
-        g->DrawImage(img, RectF(-TILE_SIZE / 2.0f, -TILE_SIZE / 2.0f, (float)TILE_SIZE, (float)TILE_SIZE),
-            0, 0, (float)img->GetWidth(), (float)img->GetHeight(), UnitPixel, &ia);
+        g->DrawImage(img, RectF(x, y, (REAL)TILE_SIZE, (REAL)TILE_SIZE),
+            0, 0, (REAL)TILE_SIZE, (REAL)TILE_SIZE, UnitPixel, &ia);
     }
     else {
-        // 설치된 레일은 빠른 단순 블릿
-        g->DrawImage(img, -TILE_SIZE / 2.0f, -TILE_SIZE / 2.0f, (float)TILE_SIZE, (float)TILE_SIZE);
+        // 설치된 레일: Save/Restore·회전 없이 단순 1장 그리기 (가장 빠름)
+        g->DrawImage(img, (INT)x, (INT)y);
     }
-
-    g->Restore(state);
 }
 
 void DrawRailPreview(Rail* rail, Graphics* g, int x, int y, RailDir dir, int owner) {

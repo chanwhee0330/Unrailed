@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Unrailed! 모작 — 게임 소개</title>
+<style>
+  :root{
+    --bg:#0f172a; --bg2:#1e293b; --card:#1e293b; --line:#334155;
+    --text:#e2e8f0; --muted:#94a3b8;
+    --amber:#f59e0b; --emerald:#10b981; --p1:#ef4444; --p2:#3b82f6; --cyan:#22d3ee;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  html,body{height:100%;}
+  body{font-family:"Malgun Gothic","맑은 고딕","Segoe UI",sans-serif;background:#020617;color:var(--text);
+    display:flex;align-items:center;justify-content:center;overflow:hidden;}
+  #stage{position:relative;width:100vw;height:56.25vw;max-height:100vh;max-width:177.78vh;
+    background:var(--bg);overflow:hidden;box-shadow:0 0 60px rgba(0,0,0,.6);}
+  .slide{position:absolute;inset:0;padding:5% 6%;display:none;flex-direction:column;animation:fade .4s ease;}
+  .slide.active{display:flex;}
+  @keyframes fade{from{opacity:0;transform:translateY(12px);}to{opacity:1;transform:none;}}
+
+  h1{font-size:4vw;line-height:1.12;font-weight:800;}
+  h2{font-size:2.6vw;font-weight:800;margin-bottom:.5em;}
+  h2 .num{color:var(--amber);margin-right:.35em;}
+  p,li{font-size:1.45vw;line-height:1.55;}
+  .lead{font-size:1.8vw;font-weight:700;line-height:1.4;}
+  .muted{color:var(--muted);} .small{font-size:1.15vw;} .xsmall{font-size:1vw;}
+  .kicker{color:var(--amber);font-weight:800;letter-spacing:.18em;font-size:1.1vw;text-transform:uppercase;margin-bottom:.7em;}
+  .tag{display:inline-block;font-size:1.05vw;font-weight:700;letter-spacing:.04em;padding:.25em .85em;border-radius:999px;}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:2.2vw;}
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:1.5vw;}
+  .grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:1.2vw;}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:1.5vw 1.4vw;}
+  .card h3{font-size:1.5vw;margin-bottom:.4em;font-weight:800;}
+  .card p{font-size:1.12vw;color:var(--muted);line-height:1.5;}
+  .icon{width:2.7vw;height:2.7vw;border-radius:10px;display:flex;align-items:center;justify-content:center;
+    font-size:1.5vw;font-weight:900;margin-bottom:.55em;}
+  ul{list-style:none;} ul li{position:relative;padding-left:1.4em;margin:.5em 0;}
+  ul li::before{content:"";position:absolute;left:0;top:.6em;width:.5em;height:.5em;border-radius:2px;background:var(--emerald);}
+  .imgframe{border:1px solid var(--line);border-radius:14px;overflow:hidden;background:#0b1220;
+    display:flex;align-items:center;justify-content:center;}
+  .imgframe img{width:100%;height:100%;object-fit:cover;display:block;}
+  .flow{display:flex;align-items:stretch;gap:.8vw;}
+  .step{flex:1;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:1.1vw .9vw;text-align:center;}
+  .step .n{font-size:1vw;font-weight:800;color:var(--amber);}
+  .step h4{font-size:1.3vw;margin:.25em 0;font-weight:800;}
+  .step p{font-size:.98vw;color:var(--muted);line-height:1.4;}
+  .chev{display:flex;align-items:center;color:var(--amber);font-size:1.6vw;font-weight:900;}
+  .footer{position:absolute;bottom:2.4%;left:6%;right:6%;display:flex;justify-content:space-between;align-items:center;
+    font-size:1vw;color:var(--muted);border-top:1px solid var(--line);padding-top:.7vw;}
+  .center{align-items:center;justify-content:center;text-align:center;}
+  .badge{font-size:1vw;font-weight:700;padding:.2em .7em;border-radius:6px;border:1px solid var(--line);color:var(--muted);}
+  .pill-row{display:flex;gap:.7vw;flex-wrap:wrap;}
+  #bar{position:fixed;top:0;left:0;height:4px;background:var(--amber);z-index:50;transition:width .3s;}
+  #hud{position:fixed;bottom:14px;right:18px;z-index:50;color:#64748b;font-size:13px;font-family:Consolas,monospace;
+    background:rgba(2,6,23,.6);padding:4px 10px;border-radius:8px;}
+  .hint{position:fixed;bottom:14px;left:18px;z-index:50;color:#475569;font-size:12px;}
+</style>
+</head>
+<body>
+<div id="bar"></div>
+<div id="stage">
+
+  <!-- 1 TITLE -->
+  <section class="slide center" style="padding:0;">
+    <div style="position:absolute;inset:0;">
+      <img src="Unrailed/Unrailed/Image/scene/gamestart.png" style="width:100%;height:100%;object-fit:cover;opacity:.28;" onerror="this.style.display='none'">
+    </div>
+    <div style="position:relative;z-index:2;">
+      <div class="tag" style="background:var(--amber);color:#0b1220;">윈도우 프로그래밍 텀 프로젝트 · 게임 소개</div>
+      <h1 style="margin-top:.4em;">Unrailed! <span style="color:var(--amber);">모작</span></h1>
+      <p class="lead" style="margin-top:.5em;">멈추지 않는 기차에 폭탄을 실어, 상대 기지를 날려라</p>
+      <p class="muted" style="margin-top:1.6em;font-size:1.3vw;">장르: 액션 · 탑뷰 로컬 2인 멀티플레이</p>
+      <p class="muted" style="margin-top:.5em;font-size:1.15vw;">2023184027 이현렬 · 2023184037 허찬휘</p>
+    </div>
+  </section>
+
+  <!-- 2 ONE-LINER + MOTIVE -->
+  <section class="slide">
+    <div class="kicker">게임 소개</div>
+    <h2><span class="num">›</span>어떤 게임인가요?</h2>
+    <p class="lead" style="margin:.2em 0 1em;">
+      자원을 캐서 <span style="color:var(--amber)">선로</span>를 깔고,
+      <span style="color:var(--p1)">폭탄</span>을 실은 기차를
+      <span style="color:var(--emerald)">상대 기지</span>에 먼저 도착시키는
+      <b>실시간 1:1 대전</b> 게임
+    </p>
+    <div class="grid2" style="margin-top:.3em;">
+      <div class="card">
+        <h3 style="color:var(--cyan)">💡 개발 동기</h3>
+        <p style="color:var(--text)">원작 <b>Unrailed</b>는 협동(co-op) 게임. <br>"여기에 <b>PVP 요소</b>를 넣으면 더 재밌겠다"는 생각에서 출발했습니다.</p>
+      </div>
+      <div class="card">
+        <h3 style="color:var(--amber)">🎮 한눈에</h3>
+        <div class="pill-row" style="margin-top:.3em;">
+          <span class="badge">탑뷰</span><span class="badge">로컬 2인</span>
+          <span class="badge">실시간 경쟁</span><span class="badge">자원 채집</span>
+          <span class="badge">선로 건설</span><span class="badge">방해 플레이</span>
+        </div>
+      </div>
+    </div>
+    <div class="footer"><span>Unrailed! 모작</span><span>01 / 12</span></div>
+  </section>
+
+  <!-- 3 FEATURES -->
+  <section class="slide">
+    <div class="kicker">게임의 특징</div>
+    <h2><span class="num">›</span>이런 점이 재밌습니다</h2>
+    <div class="grid3" style="margin-top:.3em;">
+      <div class="card"><div class="icon" style="background:var(--amber);color:#0b1220;">🚂</div>
+        <h3>멈추지 않는 기차</h3><p>기차는 계속 전진. 선로가 끊기거나 과열되면 끝장!</p></div>
+      <div class="card"><div class="icon" style="background:var(--emerald);color:#0b1220;">⛏️</div>
+        <h3>자원 → 제작</h3><p>나무·돌을 캐서 레일·장애물·폭탄을 만든다.</p></div>
+      <div class="card"><div class="icon" style="background:var(--p1);color:#fff;">💣</div>
+        <h3>폭탄 배달 승부</h3><p>폭탄 실은 기차로 상대 기지를 폭파하면 승리.</p></div>
+      <div class="card"><div class="icon" style="background:var(--p2);color:#fff;">🧱</div>
+        <h3>방해 플레이</h3><p>상대 선로 앞에 장애물을 놓아 탈선시킨다.</p></div>
+      <div class="card"><div class="icon" style="background:var(--cyan);color:#0b1220;">🤝</div>
+        <h3>로컬 2인 대전</h3><p>한 화면을 위·아래로 나눠 동시에 플레이.</p></div>
+      <div class="card"><div class="icon" style="background:#a78bfa;color:#0b1220;">💧</div>
+        <h3>관리 요소</h3><p>물을 길어 기차 과열을 식히는 멀티태스킹.</p></div>
+    </div>
+    <div class="footer"><span>게임 특징</span><span>02 / 12</span></div>
+  </section>
+
+  <!-- 4 GOAL win/lose -->
+  <section class="slide">
+    <div class="kicker">게임 목표</div>
+    <h2><span class="num">›</span>이기고 지는 법</h2>
+    <div class="grid2">
+      <div class="card" style="border-color:var(--emerald);">
+        <h3 style="color:var(--emerald);font-size:1.7vw;">✓ 승리</h3>
+        <p style="color:var(--text);margin-top:.2em;"><b>폭탄을 실은 내 기차</b>를 상대 기지에 도착시켜 <b>기지를 폭파</b>하면 승리!</p>
+        <p class="small muted" style="margin-top:.6em;">→ 누가 먼저 선로를 잇고 폭탄을 배달하느냐의 싸움</p>
+      </div>
+      <div class="card" style="border-color:var(--p1);">
+        <h3 style="color:var(--p1);font-size:1.7vw;">✗ 패배</h3>
+        <ul style="margin-top:.1em;">
+          <li>장애물에 부딪혀 <b>탈선</b></li>
+          <li>선로가 끊겨 <b>더 못 감</b></li>
+          <li>물을 못 줘 기차가 <b>과열</b></li>
+          <li>폭탄 없이 <b>빈 손</b>으로 도착</li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer"><span>승리 / 패배</span><span>03 / 12</span></div>
+  </section>
+
+  <!-- 5 CORE LOOP -->
+  <section class="slide">
+    <div class="kicker">핵심 플레이</div>
+    <h2><span class="num">›</span>한 판의 흐름</h2>
+    <div class="flow" style="margin:.6em 0 1em;">
+      <div class="step"><div class="n">STEP 1</div><h4>채집</h4><p>나무·돌 자원 수집</p></div>
+      <div class="chev">›</div>
+      <div class="step"><div class="n">STEP 2</div><h4>제작</h4><p>레일·장애물·폭탄 제작</p></div>
+      <div class="chev">›</div>
+      <div class="step"><div class="n">STEP 3</div><h4>선로 건설</h4><p>상대 기지까지 레일 연결</p></div>
+      <div class="chev">›</div>
+      <div class="step"><div class="n">STEP 4</div><h4>폭탄 배달</h4><p>기차로 기지 폭파 → 승리</p></div>
+    </div>
+    <p class="muted">이 사이클을 <b>상대보다 빠르게</b>, 그리고 <b>상대를 방해</b>하면서 반복하는 것이 핵심입니다.</p>
+    <div class="footer"><span>플레이 루프</span><span>04 / 12</span></div>
+  </section>
+
+  <!-- 6 RESOURCE & CRAFT -->
+  <section class="slide">
+    <div class="kicker">자원 & 제작</div>
+    <h2><span class="num">›</span>캐서 만든다</h2>
+    <div class="grid2">
+      <div>
+        <p><b>자동 채집</b> — 플레이어가 자원 근처에 가면 자동으로 캐지고, 다 캐면 떨어진 자원을 주워 인벤토리에 담습니다.</p>
+        <ul style="margin-top:.5em;">
+          <li>🌳 나무 · 🪨 돌 두 가지 자원</li>
+          <li>기지의 <b>제작대</b>에서 자원을 소모해 제작</li>
+        </ul>
+      </div>
+      <div class="grid3" style="gap:1.1vw;align-content:start;">
+        <div class="card center"><div style="font-size:1.9vw">🛤️</div><h3 style="font-size:1.3vw">레일</h3><p class="xsmall">나무+돌</p></div>
+        <div class="card center"><div style="font-size:1.9vw">🧱</div><h3 style="font-size:1.3vw">장애물</h3><p class="xsmall">방해용</p></div>
+        <div class="card center"><div style="font-size:1.9vw">💣</div><h3 style="font-size:1.3vw">폭탄</h3><p class="xsmall">기지 폭파</p></div>
+      </div>
+    </div>
+    <div class="footer"><span>자원 / 제작</span><span>05 / 12</span></div>
+  </section>
+
+  <!-- 7 RAIL -->
+  <section class="slide">
+    <div class="kicker">선로 건설</div>
+    <h2><span class="num">›</span>레일 깔기</h2>
+    <div class="grid2">
+      <div>
+        <ul>
+          <li><b>상하좌우</b> 자유롭게 설치 — 직선뿐 아니라 <b>커브</b>로 꺾어 길을 만듦</li>
+          <li>설치하면 주변 레일과 <b>자동으로 이어져</b> 곡선이 생성</li>
+          <li>내 기지에서 <b>상대 기지까지</b> 길을 연결하는 것이 목표</li>
+          <li>두 플레이어의 레일은 <b>색으로 구분</b> (빨강 / 파랑)</li>
+        </ul>
+      </div>
+      <div class="imgframe">
+        <img src="Unrailed/Unrailed/Image/Map/newUnrailedmap.png" onerror="this.parentNode.innerHTML='<div style=&quot;padding:2vw;color:#64748b&quot;>맵 이미지</div>'">
+      </div>
+    </div>
+    <div class="footer"><span>레일 시스템</span><span>06 / 12</span></div>
+  </section>
+
+  <!-- 8 TRAIN -->
+  <section class="slide">
+    <div class="kicker">기차</div>
+    <h2><span class="num">›</span>멈추지 않는 기차</h2>
+    <div class="grid3">
+      <div class="card"><div class="icon" style="background:var(--cyan);color:#0b1220;">➡️</div>
+        <h3>자동 주행</h3><p>깔린 레일을 따라 스스로 전진하고 커브에서 방향을 틀어 회전.</p></div>
+      <div class="card"><div class="icon" style="background:var(--p1);color:#fff;">🔥</div>
+        <h3>과열 관리</h3><p>달릴수록 열이 오름. 양동이로 물을 길어 식혀야 함. 과열 시 패배.</p></div>
+      <div class="card"><div class="icon" style="background:var(--amber);color:#0b1220;">⚠️</div>
+        <h3>탈선 위기</h3><p>앞 레일이 떨어지면 기차 위에 경고 표시. 끊기면 탈선 = 패배.</p></div>
+    </div>
+    <div style="display:flex;align-items:center;gap:1.5vw;margin-top:1.4em;">
+      <img src="Unrailed/Unrailed/Image/train/locomoto.png" style="height:4vw;image-rendering:pixelated;" onerror="this.style.display='none'">
+      <p class="muted small">기차는 폭탄을 실으면 <b>운반 칸</b>이 붙고, 상대 기지에 닿는 순간 폭발합니다.</p>
+    </div>
+    <div class="footer"><span>기차 시스템</span><span>07 / 12</span></div>
+  </section>
+
+  <!-- 9 STRATEGY -->
+  <section class="slide">
+    <div class="kicker">대전 전략</div>
+    <h2><span class="num">›</span>이기기 위한 수 싸움</h2>
+    <div class="grid3">
+      <div class="card"><div class="icon" style="background:var(--emerald);color:#0b1220;">⚡</div>
+        <h3>속도 경쟁</h3><p>누가 더 빨리 자원을 모아 선로를 잇느냐의 기본 싸움.</p></div>
+      <div class="card"><div class="icon" style="background:var(--p1);color:#fff;">🧱</div>
+        <h3>방해</h3><p>상대 선로 앞에 장애물을 놓아 기차를 탈선시킨다.</p></div>
+      <div class="card"><div class="icon" style="background:var(--amber);color:#0b1220;">💣</div>
+        <h3>폭탄 타이밍</h3><p>기차가 도착하기 전 폭탄을 실어야 승리로 연결.</p></div>
+    </div>
+    <p class="muted" style="margin-top:1.4em;">건설·관리·방해를 <b>동시에</b> 처리해야 하는 멀티태스킹 두뇌 싸움입니다.</p>
+    <div class="footer"><span>전략 요소</span><span>08 / 12</span></div>
+  </section>
+
+  <!-- 10 CONTROLS -->
+  <section class="slide">
+    <div class="kicker">조작법</div>
+    <h2><span class="num">›</span>한 키보드, 두 플레이어</h2>
+    <div class="grid2">
+      <div class="card" style="border-color:var(--p1);">
+        <h3 style="color:var(--p1);font-size:1.6vw;">PLAYER 1</h3>
+        <ul>
+          <li>이동 <b>W A S D</b></li>
+          <li><b>Q</b> 설치물 변경 · <b>R</b> 레일 방향 · <b>E</b> 설치</li>
+          <li><b>F</b> 양동이 줍기 / 놓기</li>
+        </ul>
+      </div>
+      <div class="card" style="border-color:var(--p2);">
+        <h3 style="color:var(--p2);font-size:1.6vw;">PLAYER 2</h3>
+        <ul>
+          <li>이동 <b>← ↑ ↓ →</b></li>
+          <li><b>1</b> 설치물 변경 · <b>2</b> 레일 방향 · <b>3</b> 설치</li>
+          <li><b>0</b> 양동이 줍기 / 놓기</li>
+        </ul>
+      </div>
+    </div>
+    <p class="small muted" style="margin-top:1em;">공통: <b>ESC</b> 메뉴 · <b>F11</b> 전체화면 · 시작화면에서 <b>볼륨 조절</b>·<b>조작법</b> 확인</p>
+    <div class="footer"><span>조작법</span><span>09 / 12</span></div>
+  </section>
+
+  <!-- 11 SCREENS -->
+  <section class="slide">
+    <div class="kicker">게임 화면</div>
+    <h2><span class="num">›</span>편의 기능 & UI</h2>
+    <div class="grid2" style="align-items:stretch;">
+      <div class="imgframe" style="max-height:24vw;">
+        <img src="Unrailed/Unrailed/Image/scene/gamestart.png" onerror="this.parentNode.innerHTML='<div style=&quot;padding:2vw;color:#64748b&quot;>시작 화면</div>'">
+      </div>
+      <div style="display:flex;flex-direction:column;justify-content:center;">
+        <ul>
+          <li><b>시작 화면</b> — 게임시작 · 볼륨 슬라이더 · 조작법 버튼</li>
+          <li><b>조작법 화면</b> — 두 플레이어 키 안내</li>
+          <li><b>일시정지·설정</b> — ESC로 진입, 볼륨 조절</li>
+          <li><b>전체화면(F11)</b> 지원</li>
+          <li><b>BGM·효과음</b> + 게임 시작 연출</li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer"><span>UI / 편의기능</span><span>10 / 12</span></div>
+  </section>
+
+  <!-- 12 TEAM/INFO -->
+  <section class="slide">
+    <div class="kicker">개발 정보</div>
+    <h2><span class="num">›</span>팀 & 진행</h2>
+    <div class="grid2">
+      <div class="card">
+        <h3 style="color:var(--amber)">역할 분담</h3>
+        <ul>
+          <li><b>이현렬</b> — 레일 설치, 폭탄 시스템, 열차 이동·과열, 승패 처리</li>
+          <li><b>허찬휘</b> — 플레이어 이동, 맵 제작, 장애물·자원 시스템</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3 style="color:var(--cyan)">개발 개요</h3>
+        <ul>
+          <li>플랫폼: <b>Win32 API + GDI+ (C++)</b></li>
+          <li>형태: 로컬 2인 분할화면</li>
+          <li>맵: 타일 기반 / 양 끝 기지·곳곳의 자원</li>
+          <li>기간: 약 5주 (단계별 시스템 구현)</li>
+        </ul>
+      </div>
+    </div>
+    <p class="muted small" style="margin-top:1.1em;">※ 세부 구현 방식(렌더링·레일 알고리즘·최적화 등)은 질문 주시면 자세히 설명드리겠습니다.</p>
+    <div class="footer"><span>개발 정보</span><span>11 / 12</span></div>
+  </section>
+
+  <!-- 13 END -->
+  <section class="slide center" style="padding:0;">
+    <div style="position:absolute;inset:0;">
+      <img src="Unrailed/Unrailed/Image/scene/gamestart.png" style="width:100%;height:100%;object-fit:cover;opacity:.22;" onerror="this.style.display='none'">
+    </div>
+    <div style="position:relative;z-index:2;">
+      <h1 style="font-size:3.6vw;">시연 & 질문</h1>
+      <p class="lead" style="margin-top:.6em;color:var(--amber);">직접 플레이해 보겠습니다</p>
+      <p class="muted" style="margin-top:1.6em;font-size:1.2vw;">Unrailed! 모작 · 이현렬 · 허찬휘</p>
+    </div>
+    <div class="footer"><span>감사합니다</span><span>12 / 12</span></div>
+  </section>
+
+</div>
+
+<div id="hud">1 / 13</div>
+<div class="hint">← → 또는 클릭 · F 전체화면</div>
+
+<script>
+  const slides=[...document.querySelectorAll('.slide')];
+  let i=0;
+  const hud=document.getElementById('hud'),bar=document.getElementById('bar');
+  function show(n){
+    i=Math.max(0,Math.min(slides.length-1,n));
+    slides.forEach((s,k)=>s.classList.toggle('active',k===i));
+    hud.textContent=(i+1)+' / '+slides.length;
+    bar.style.width=((i+1)/slides.length*100)+'%';
+  }
+  const next=()=>show(i+1), prev=()=>show(i-1);
+  document.addEventListener('keydown',e=>{
+    if(['ArrowRight',' ','PageDown'].includes(e.key)){next();e.preventDefault();}
+    else if(['ArrowLeft','PageUp'].includes(e.key)){prev();e.preventDefault();}
+    else if(e.key==='Home')show(0); else if(e.key==='End')show(slides.length-1);
+    else if(e.key==='f'||e.key==='F'){document.fullscreenElement?document.exitFullscreen():document.documentElement.requestFullscreen();}
+  });
+  document.getElementById('stage').addEventListener('click',e=>{
+    const r=e.currentTarget.getBoundingClientRect();
+    (e.clientX-r.left < r.width*0.32)?prev():next();
+  });
+  show(0);
+</script>
+</body>
+</html>

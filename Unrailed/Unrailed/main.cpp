@@ -35,6 +35,7 @@ using namespace Gdiplus;
 #define BOMB_STONE_COST 4
 #define BOMB_EXPLODE_TIME 1.0f
 #define EXPLOSION_EFFECT_TIME 0.45f
+#define BASE_EXPLOSION_FLASH_TIME 1.4f
 #define PLAYER_SIZE 64.0f
 #define PLAYER_COLLISION_LEFT 14
 #define PLAYER_COLLISION_RIGHT 50
@@ -42,6 +43,7 @@ using namespace Gdiplus;
 #define PLAYER_COLLISION_BOTTOM 42
 #define TRAIN_WIDTH 96.0f
 #define TRAIN_HEIGHT 48.0f
+#define TRAIN_BOOST_MULTIPLIER 8.0f
 #define TRAIN_ROT_SPEED 180.0f  // 기차 회전 속도(초당 도). 작을수록 천천히 회전
 #define BUCKET_SIZE 64.0f
 #define HELD_BUCKET_SIZE 48.0f
@@ -196,10 +198,11 @@ struct GameData {
     bool obstacleGrid[MAP_HEIGHT][MAP_WIDTH];
     bool gameOver;
     int winner;
+    bool baseExplosionActive;
+    ULONGLONG baseExplosionStartTime;
     bool rKeyPrev;
     bool twoKeyPrev;
     bool f2KeyPrev;
-    bool f3KeyPrev;
     bool infiniteRailMode;
     bool infiniteResourceMode;
     HDC memDC;
@@ -298,6 +301,7 @@ void AddExplosion(float x, float y);
 void AddBaseExplosion(BaseArea base);
 void UpdateBombs(float deltaTime);
 void UpdateExplosions(float deltaTime);
+bool HandleBombTrainCollision();
 void UpdateRailNeighbors(Rail* rail, int tileX, int tileY);
 bool PlaceRail(Rail* rail, int tileX, int tileY, RailDir dir, int owner);
 PlacementType GetNextPlacementType(Player* player, PlacementType placementType);
@@ -317,7 +321,7 @@ void ReleaseTrain(Train* train);
 bool IsTrainOverheated(Train* train);
 void UpdateTrainDirection(Train* train, RailDir rd);
 int CountRailsAhead(Train* train, Rail* rail, int maxCount);
-void UpdateTrain(Train* train, Rail* rail, float deltaTime);
+void UpdateTrain(Train* train, Rail* rail, float deltaTime, float speedMultiplier = 1.0f);
 void DrawHeatBar(Train* train, Graphics* g);
 void DrawTrain(Train* train, Graphics* g, Camera cam, int viewW, int viewH);
 void InitResource(Resource* resource, ResourceType type, float x, float y);
@@ -332,6 +336,7 @@ bool CanPlaceResourceAt(float x, float y);
 bool FindRandomResourcePosition(float* outX, float* outY, int preferredSide = -1);
 void CreateResources();
 void DrawVictoryScreen(Graphics* g);
+void DrawBaseExplosionOverlay(Graphics* g, float elapsed);
 void DrawMenuButton(Graphics* g, const wchar_t* text, int x, int y, int w, int h);
 void DrawPauseMenu(Graphics* g);
 void DrawSettingsMenu(Graphics* g);
@@ -430,10 +435,11 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
         ApplyVolume(game.volume);
         game.gameOver = false;
         game.winner = 0;
+        game.baseExplosionActive = false;
+        game.baseExplosionStartTime = 0;
         game.rKeyPrev = false;
         game.twoKeyPrev = false;
         game.f2KeyPrev = false;
-        game.f3KeyPrev = false;
         game.infiniteRailMode = false;
         game.infiniteResourceMode = false;
         game.selectedDir1 = RAIL_HORIZONTAL;
@@ -600,8 +606,6 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
                 }
                 game.f2KeyPrev = f2Key;
 
-                // F3(무한 자원 모드)는 WM_KEYDOWN에서 토글 처리
-
                 // place selected item
                 bool eKey = GetAsyncKeyState('E') & 0x8000;
                 if (eKey && !game.eKeyPrev) {
@@ -708,15 +712,12 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
                     }
                 }
                 // train move
-                UpdateTrain(&game.train1, &game.rail, deltaTime);
-                UpdateTrain(&game.train2, &game.rail, deltaTime);
-
-                // win check
-                if (!game.gameOver) {
-                    if (game.train1.finished && !game.train2.finished) { game.gameOver = true; game.winner = 1; }
-                    else if (game.train2.finished && !game.train1.finished) { game.gameOver = true; game.winner = 2; }
-                    else if (game.train1.finished && game.train2.finished) { game.gameOver = true; game.winner = 0; }
-                }
+                float train1SpeedMultiplier = (GetAsyncKeyState(VK_F4) & 0x8000) ? TRAIN_BOOST_MULTIPLIER : 1.0f;
+                float train2SpeedMultiplier = (GetAsyncKeyState(VK_F5) & 0x8000) ? TRAIN_BOOST_MULTIPLIER : 1.0f;
+                UpdateTrain(&game.train1, &game.rail, deltaTime, train1SpeedMultiplier);
+                HandleBombTrainCollision();
+                UpdateTrain(&game.train2, &game.rail, deltaTime, train2SpeedMultiplier);
+                HandleBombTrainCollision();
 
                 // camera follow
                 int halfH = SCREEN_HEIGHT / 2;
@@ -897,6 +898,9 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
         DrawInventory(&game.p2, game.memDC, game.cam2, halfH);
         RestoreDC(game.memDC, -1);
 
+        Pen pen(Color(255, 0, 0, 0), 5);
+        g.DrawLine(&pen, 0, halfH, SCREEN_WIDTH, halfH);
+
         // game over screen
         if (game.gameOver) {
             Graphics vg(game.memDC);
@@ -917,8 +921,6 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
             DrawGameStartOverlay(&og);
         }
 
-        Pen pen(Color(255, 0, 0, 0), 5);
-        g.DrawLine(&pen, 0, halfH, SCREEN_WIDTH, halfH);
         PresentBackBuffer(hWnd, hDC);
 
         EndPaint(hWnd, &ps);
@@ -1869,17 +1871,9 @@ bool HasBomb(int tileX, int tileY) {
     return false;
 }
 
-bool CanPlaceRailAt(Rail* rail, int tileX, int tileY, RailDir dir, int owner) {
+bool CanPlaceRailAt(Rail* rail, int tileX, int tileY, RailDir, int) {
     if (tileX < 0 || tileY < 0 || tileX >= MAP_WIDTH || tileY >= MAP_HEIGHT) return false;
     if (HasRail(rail, tileX, tileY) || HasObstacle(tileX, tileY)) return false;
-
-    // 수직 충돌 검사는 같은 소유자의 레일만 고려 (상대 레일과는 무관하게 설치 가능)
-    if (dir == RAIL_HORIZONTAL) {
-        if (HasVerticalOwner(rail, tileX, tileY - 1, owner) || HasVerticalOwner(rail, tileX, tileY + 1, owner)) return false;
-    }
-    if (dir == RAIL_VERTICAL) {
-        if (HasHorizontalOwner(rail, tileX - 1, tileY, owner) || HasHorizontalOwner(rail, tileX + 1, tileY, owner)) return false;
-    }
 
     return true;
 }
@@ -2002,6 +1996,41 @@ void UpdateExplosions(float deltaTime) {
             game.explosions.erase(game.explosions.begin() + i);
         }
     }
+}
+
+bool HandleBombTrainCollision() {
+    if (game.gameOver) return false;
+    if (!RectsOverlap(GetTrainRect(&game.train1), GetTrainRect(&game.train2))) return false;
+
+    int winner = 0;
+    if (game.train1.bombCargo > 0 && game.train2.bombCargo > 0) {
+        winner = 0;
+    }
+    else if (game.train1.bombCargo > 0) {
+        winner = 1;
+    }
+    else if (game.train2.bombCargo > 0) {
+        winner = 2;
+    }
+    else {
+        return false;
+    }
+
+    float centerX = (game.train1.pos.x + game.train2.pos.x + TRAIN_WIDTH) / 2.0f;
+    float centerY = (game.train1.pos.y + game.train2.pos.y + TRAIN_HEIGHT) / 2.0f;
+    AddExplosion(centerX, centerY);
+    AddExplosion(centerX - TRAIN_WIDTH * 0.35f, centerY - TRAIN_HEIGHT * 0.45f);
+    AddExplosion(centerX + TRAIN_WIDTH * 0.35f, centerY + TRAIN_HEIGHT * 0.45f);
+
+    game.train1.finished = true;
+    game.train2.finished = true;
+    game.train1.bombCargo = 0;
+    game.train2.bombCargo = 0;
+    game.gameOver = true;
+    game.winner = winner;
+    game.baseExplosionActive = true;
+    game.baseExplosionStartTime = GetTickCount64();
+    return true;
 }
 
 RailDir GetRailDir(Rail* rail, int tileX, int tileY) {
@@ -2193,15 +2222,15 @@ void DrawPlacementPreview(Graphics* g, Player* player, PlacementType placementTy
     bool canPlaceRail = hasRailItem && CanPlaceRailAt(&game.rail, tileX, tileY, railDir, player->id);
     bool canPlaceObstacle = hasObstacleItem && CanPlaceObstacleAt(tileX, tileY);
     bool canPlaceBomb = hasBombItem && CanPlaceBombAt(tileX, tileY);
-
-    if (placementType == PLACEMENT_RAIL && !canPlaceRail) return;
-    if (placementType == PLACEMENT_OBSTACLE && !canPlaceObstacle) return;
+    bool canPlace = false;
+    if (placementType == PLACEMENT_RAIL) canPlace = canPlaceRail;
+    else if (placementType == PLACEMENT_OBSTACLE) canPlace = canPlaceObstacle;
+    else if (placementType == PLACEMENT_BOMB) canPlace = canPlaceBomb;
 
     Color previewColor = tileColor;
     if (placementType == PLACEMENT_OBSTACLE) previewColor = Color(120, 255, 130, 70);
-    if (placementType == PLACEMENT_BOMB) {
-        previewColor = canPlaceBomb ? Color(120, 255, 80, 45) : Color(90, 120, 120, 120);
-    }
+    if (placementType == PLACEMENT_BOMB) previewColor = Color(120, 255, 80, 45);
+    if (!canPlace) previewColor = Color(90, 120, 120, 120);
     SolidBrush previewBrush(previewColor);
     g->FillRectangle(&previewBrush, (float)preX, (float)preY, (float)TILE_SIZE, (float)TILE_SIZE);
 
@@ -2407,7 +2436,7 @@ int CountRailsAhead(Train* train, Rail* rail, int maxCount) {
     return count;
 }
 
-void UpdateTrain(Train* train, Rail* rail, float deltaTime) {
+void UpdateTrain(Train* train, Rail* rail, float deltaTime, float speedMultiplier) {
     if (game.gameOver) return;
     if (train->finished) return;
 
@@ -2430,11 +2459,14 @@ void UpdateTrain(Train* train, Rail* rail, float deltaTime) {
         if (train->bombCargo > 0) {
             AddBaseExplosion(targetBase);
             train->bombCargo = 0;
-            game.winner = (owner == 1) ? 2 : 1;
+            game.winner = owner;
+            game.baseExplosionActive = true;
+            game.baseExplosionStartTime = GetTickCount64();
         }
         else {
             AddExplosion(train->pos.x + TRAIN_WIDTH / 2.0f, train->pos.y + TRAIN_HEIGHT / 2.0f);
-            game.winner = owner;
+            game.winner = (owner == 1) ? 2 : 1;
+            game.baseExplosionActive = false;
         }
         return;
     }
@@ -2442,17 +2474,24 @@ void UpdateTrain(Train* train, Rail* rail, float deltaTime) {
     if (HasObstacle(tileX, tileY)) {
         train->finished = true;
         game.gameOver = true;
-        game.winner = (train == &game.train1) ? 1 : 2;
+        game.winner = (owner == 1) ? 2 : 1;
+        game.baseExplosionActive = false;
+        AddExplosion(train->pos.x + TRAIN_WIDTH / 2.0f, train->pos.y + TRAIN_HEIGHT / 2.0f);
         return;
     }
 
     if (HasRailOwner(rail, tileX, tileY, owner)) {
         UpdateTrainDirection(train, GetRailDir(rail, tileX, tileY));
-        train->pos.x += train->speed * train->dirX * deltaTime;
-        train->pos.y += train->speed * train->dirY * deltaTime;
+        train->pos.x += train->speed * speedMultiplier * train->dirX * deltaTime;
+        train->pos.y += train->speed * speedMultiplier * train->dirY * deltaTime;
     }
     else {
         train->finished = true;
+        game.gameOver = true;
+        game.winner = (owner == 1) ? 2 : 1;
+        game.baseExplosionActive = false;
+        AddExplosion(train->pos.x + TRAIN_WIDTH / 2.0f, train->pos.y + TRAIN_HEIGHT / 2.0f);
+        return;
     }
 
     // 진행 방향(헤딩)으로 회전 각도를 부드럽게 보간
@@ -2740,23 +2779,81 @@ void CreateResources() {
 }
 
 void DrawVictoryScreen(Graphics* g) {
-    SolidBrush overlay(Color(180, 0, 0, 0));
-    g->FillRectangle(&overlay, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+    float elapsed = game.baseExplosionActive
+        ? (float)(GetTickCount64() - game.baseExplosionStartTime) / 1000.0f
+        : BASE_EXPLOSION_FLASH_TIME;
+
+    if (game.baseExplosionActive) {
+        DrawBaseExplosionOverlay(g, elapsed);
+    }
+    else {
+        SolidBrush overlay(Color(180, 0, 0, 0));
+        g->FillRectangle(&overlay, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+    }
 
     FontFamily fontFamily(L"Arial");
     Font font(&fontFamily, 80, FontStyleBold, UnitPixel);
-    SolidBrush textBrush(Color(255, 255, 255, 0));
+    BYTE textAlpha = 255;
+    if (game.baseExplosionActive) {
+        float t = (elapsed - 0.45f) / 0.65f;
+        if (t < 0.0f) t = 0.0f;
+        if (t > 1.0f) t = 1.0f;
+        textAlpha = (BYTE)(255.0f * t);
+    }
+    SolidBrush textBrush(Color(textAlpha, 255, 245, 120));
+    SolidBrush shadowBrush(Color((BYTE)(textAlpha * 0.75f), 60, 8, 0));
     StringFormat sf;
     sf.SetAlignment(StringAlignmentCenter);
     sf.SetLineAlignment(StringAlignmentCenter);
 
     std::wstring msg;
-    if (game.winner == 1) msg = L"Player 2 WIN!";
-    else if (game.winner == 2) msg = L"Player 1 WIN!";
+    if (game.winner == 1) msg = L"Player 1 Win";
+    else if (game.winner == 2) msg = L"Player 2 Win";
     else msg = L"DRAW!";
 
     RectF rect(0.0f, 0.0f, (REAL)SCREEN_WIDTH, (REAL)SCREEN_HEIGHT);
+    RectF shadowRect(4.0f, 5.0f, (REAL)SCREEN_WIDTH, (REAL)SCREEN_HEIGHT);
+    g->DrawString(msg.c_str(), -1, &font, shadowRect, &sf, &shadowBrush);
     g->DrawString(msg.c_str(), -1, &font, rect, &sf, &textBrush);
+}
+
+void DrawBaseExplosionOverlay(Graphics* g, float elapsed) {
+    float t = elapsed / BASE_EXPLOSION_FLASH_TIME;
+    if (t < 0.0f) t = 0.0f;
+    if (t > 1.0f) t = 1.0f;
+    float animTime = elapsed;
+    if (animTime > BASE_EXPLOSION_FLASH_TIME) animTime = BASE_EXPLOSION_FLASH_TIME;
+
+    BYTE flashAlpha = (BYTE)(230.0f - 70.0f * t);
+    SolidBrush heat(Color(flashAlpha, 155, 12, 0));
+    g->FillRectangle(&heat, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+
+    int pulse = (int)(sinf(animTime * 18.0f) * 18.0f);
+    SolidBrush core(Color((BYTE)(230.0f * (1.0f - t * 0.35f)), 255, 210, 35));
+    SolidBrush mid(Color((BYTE)(210.0f * (1.0f - t * 0.25f)), 255, 95, 8));
+    SolidBrush smoke(Color((BYTE)(115.0f + 60.0f * t), 35, 22, 20));
+
+    for (int i = 0; i < 9; i++) {
+        float cx = (float)((i * 173 + 120) % (SCREEN_WIDTH + 240) - 120);
+        float cy = (float)((i * 97 + 70) % (SCREEN_HEIGHT + 160) - 80);
+        float radius = 180.0f + (float)((i * 41) % 130) + animTime * 170.0f + pulse;
+        g->FillEllipse((i % 2 == 0) ? &core : &mid,
+            cx - radius * 0.65f, cy - radius * 0.45f,
+            radius * 1.3f, radius * 0.9f);
+    }
+
+    for (int i = 0; i < 7; i++) {
+        float cx = (float)((i * 211 + 90) % (SCREEN_WIDTH + 300) - 150);
+        float cy = (float)(SCREEN_HEIGHT - 120 - ((i * 53) % 220));
+        float radius = 210.0f + (float)((i * 37) % 90) + animTime * 95.0f;
+        g->FillEllipse(&smoke,
+            cx - radius * 0.55f, cy - radius * 0.35f,
+            radius * 1.1f, radius * 0.7f);
+    }
+
+    BYTE dimAlpha = (BYTE)(60.0f + 80.0f * t);
+    SolidBrush dim(Color(dimAlpha, 0, 0, 0));
+    g->FillRectangle(&dim, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -2903,7 +3000,8 @@ void DrawControlsScreen(Graphics* g) {
     DrawCtrlLine(g, &keyFont, &descFont, lx, y, L"Q",       L"설치물 종류 변경"); y += 40;
     DrawCtrlLine(g, &keyFont, &descFont, lx, y, L"R",       L"레일 방향 전환");   y += 40;
     DrawCtrlLine(g, &keyFont, &descFont, lx, y, L"E",       L"설치하기");        y += 40;
-    DrawCtrlLine(g, &keyFont, &descFont, lx, y, L"F",       L"양동이 줍기 / 놓기");
+    DrawCtrlLine(g, &keyFont, &descFont, lx, y, L"F",       L"양동이 줍기 / 놓기"); y += 40;
+    DrawCtrlLine(g, &keyFont, &descFont, lx, y, L"F4",      L"기차 가속");
 
     // 플레이어 2
     g->DrawString(L"플레이어 2", -1, &headFont, PointF((REAL)rx, 110.0f), &sfL, &cyan);
@@ -2912,7 +3010,8 @@ void DrawControlsScreen(Graphics* g) {
     DrawCtrlLine(g, &keyFont, &descFont, rx, y, L"1",     L"설치물 종류 변경"); y += 40;
     DrawCtrlLine(g, &keyFont, &descFont, rx, y, L"2",     L"레일 방향 전환");   y += 40;
     DrawCtrlLine(g, &keyFont, &descFont, rx, y, L"3",     L"설치하기");        y += 40;
-    DrawCtrlLine(g, &keyFont, &descFont, rx, y, L"0",     L"양동이 줍기 / 놓기");
+    DrawCtrlLine(g, &keyFont, &descFont, rx, y, L"0",     L"양동이 줍기 / 놓기"); y += 40;
+    DrawCtrlLine(g, &keyFont, &descFont, rx, y, L"F5",    L"기차 가속");
 
     // 공통 / 시스템
     g->DrawString(L"공통 / 시스템", -1, &headFont, PointF((REAL)lx, 400.0f), &sfL, &cyan);

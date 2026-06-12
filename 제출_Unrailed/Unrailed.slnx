@@ -1,0 +1,7 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="Unrailed/Unrailed.vcxproj" Id="4bf0ecb4-cf63-4fbe-b92b-1b81539f682e" />
+</Solution>

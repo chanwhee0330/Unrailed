@@ -485,8 +485,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
         InitMap(&game.map);
         LoadMapCsv(&game.map, L"Image\\Map\\unTiled map_Tile Layer 1.csv");
         InitRail(&game.rail);
-        g_emptyBucket = new Bitmap(L"Image\\train\\bucket.png");  // 경로 채워줘
-        g_fullBucket = new Bitmap(L"Image\\train\\waterbucket.png");  // 경로 채워줘
+        g_emptyBucket = new Bitmap(L"Image\\train\\bucket.png");  
+        g_fullBucket = new Bitmap(L"Image\\train\\waterbucket.png"); 
         g_bombImage = new Bitmap(L"Image\\train\\bomb.png");
         g_emergencyImage = new Bitmap(L"Image\\train\\emergemcy.png");
         g_helperImage = new Bitmap(L"Image\\scene\\Helper.png");

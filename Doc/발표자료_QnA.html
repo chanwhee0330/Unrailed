@@ -107,12 +107,18 @@
 
     <div class="qa"><div class="q">맵 크기는 무엇으로 정해지나요?</div>
       <div class="a"><code>MAP_WIDTH × MAP_HEIGHT</code>(타일 격자, 현재 60×30)와 <b>맵 이미지 크기</b>(1920×960)를 함께 맞춥니다. 타일 32px 기준으로 두 값이 일치해야 카메라 범위와 배경이 어긋나지 않습니다.</div></div>
+
+    <div class="qa"><div class="q">맵 전체를 매 프레임 그리면 느리지 않나요?</div>
+      <div class="a">화면에 <b>보이는 영역만 잘라서</b> 그립니다(<code>DrawMap</code>). 카메라 위치를 기준으로 보이는 사각형만 맵 이미지에서 복사하므로, 맵이 커도 그리는 비용은 화면 크기로 고정됩니다.</div></div>
+
+    <div class="qa"><div class="q">물 판정과 물 보충은 어떻게 하나요?</div>
+      <div class="a">충돌을 분석할 때 <b>파란 픽셀을 물로 따로 표시</b>해 둡니다(<code>waterBits</code>). 플레이어가 빈 양동이를 들고 물가에 가면 양동이가 채워지고, 그 물로 기차의 과열을 식힙니다.</div></div>
   </section>
 
   <!-- 4 -->
   <section id="s4">
     <div class="sec-h"><span class="dot" style="background:var(--p1)"></span><h2>4. 레일 시스템 <span class="tag mine">★</span></h2></div>
-    <div class="sec-sub">자동 방향 감지 · 소유자 분리 · 색 구분</div>
+    <div class="sec-sub">설치 흐름 · 자료구조 · 자동 방향 감지 · 소유자 분리 · 색 구분</div>
 
     <div class="qa"><div class="q">레일이 자동으로 꺾이는(커브) 건 어떻게 했나요?</div>
       <div class="a">설치하는 순간 <b>상하좌우 이웃 레일을 보고</b> 직선/커브를 결정합니다(<code>AutoDetectRailDir</code>). 가로 한쪽 + 세로 한쪽이면 해당 방향의 커브(4종)를 선택하고, 설치 시 주변 레일도 다시 계산해 자연스럽게 이어집니다. 커브 이미지는 한 장을 90/180/270° 회전해 표현합니다.</div></div>
@@ -127,6 +133,21 @@
 
     <div class="qa"><div class="q">레일 위치를 어떻게 빠르게 찾나요? (자료구조)</div>
       <div class="a"><code>grid[높이][너비]</code> 2D 배열에 방향을, <code>ownerGrid</code>에 소유자를 저장해 <b>O(1)로 조회</b>합니다. 처음엔 레일 벡터를 매번 선형 탐색(O(n))했는데, 그리드로 바꿔 성능을 크게 개선했습니다.</div></div>
+
+    <div class="qa"><div class="q">레일을 벡터와 그리드 두 가지로 같이 관리하는 이유는?</div>
+      <div class="a"><b>벡터(<code>rails</code>)</b>는 화면에 그릴 레일 목록이고, <b><code>grid</code>·<code>ownerGrid</code></b>는 "이 타일에 레일이 있나, 방향은, 주인은?"을 <b>O(1)로 답하는 표</b>입니다. 기차 주행·설치 검사·커브 판별은 매 프레임 타일 단위로 조회하므로 그리드가 빠르고, 그리기는 목록을 순회하는 게 편해서 둘을 함께 씁니다.</div></div>
+
+    <div class="qa"><div class="q">레일을 설치하면 내부적으로 어떤 순서로 처리되나요?</div>
+      <div class="a"><code>PlaceRail</code>의 처리 순서입니다.
+      <ul>
+        <li><b>① 설치 가능 검사</b>(<code>CanPlaceRailAt</code>) — 이미 레일·장애물이 있으면 불가(같은 소유자 기준)</li>
+        <li><b>② 방향 결정</b>(<code>AutoDetectRailDir</code>) — 이웃을 보고 직선/커브 판별</li>
+        <li><b>③ 기록</b> — 벡터에 추가하고 <code>grid</code>·<code>ownerGrid</code>에 저장</li>
+        <li><b>④ 주변 갱신</b>(<code>UpdateRailNeighbors</code>) — 인접한 4칸 레일 모양을 다시 계산해 자연스럽게 연결</li>
+      </ul></div></div>
+
+    <div class="qa"><div class="q">레일을 그릴 때 회전을 매 프레임 계산하나요?</div>
+      <div class="a">아니요. 로드할 때 <b>소유자 3 × 방향 6 = 18종 이미지를 미리 만들어</b> 둡니다(<code>variant</code>). 회전·색을 미리 입혀두므로, 그릴 때는 알맞은 이미지를 골라 <b>한 장 그리기만</b> 하면 됩니다. 커브 이미지는 한 장을 90/180/270° 돌려 4종을 만듭니다. 이 덕분에 레일이 많아도 끊김이 줄었습니다.</div></div>
   </section>
 
   <!-- 5 -->
@@ -145,6 +166,12 @@
 
     <div class="qa"><div class="q">탈선 위기 경고는 어떻게 띄우나요?</div>
       <div class="a">기차 진행 방향으로 <b>커브를 따라가며 남은 레일 수를 세고</b>(<code>CountRailsAhead</code>), 1개 이하이면 기차 위에 경고 이미지를 0.3초 간격으로 깜빡입니다.</div></div>
+
+    <div class="qa"><div class="q">두 기차는 어떻게 서로 반대 방향으로 출발하나요?</div>
+      <div class="a">기차마다 진행 방향 벡터(<code>dirX</code>/<code>dirY</code>)를 갖고, 시작할 때 P1은 오른쪽, P2는 왼쪽을 향하도록 둡니다. 스프라이트도 방향에 맞는 좌우 이미지를 따로 쓰고, 회전 기준 각도도 다르게 잡습니다.</div></div>
+
+    <div class="qa"><div class="q">기차 속도나 과열 빠르기는 어떻게 조절하나요?</div>
+      <div class="a">주행 속도는 <code>speed</code>, 과열 상승은 <code>HEAT_RATE</code>, 회전 빠르기는 <code>TRAIN_ROT_SPEED</code> 같은 상수로 조절합니다. 값만 바꾸면 게임 템포를 쉽게 맞출 수 있습니다.</div></div>
   </section>
 
   <!-- 6 -->
@@ -164,6 +191,12 @@
 
     <div class="qa"><div class="q">폭탄은 어떻게 기차에 싣나요?</div>
       <div class="a">폭탄을 <b>기차가 있는 위치에 설치</b>하면 그 기차에 적재됩니다(기차당 1개). 기차가 아닌 타일에 설치하면 타이머 후 폭발해 주변 장애물을 제거합니다.</div></div>
+
+    <div class="qa"><div class="q">폭탄이 터지면 무슨 일이 일어나나요?</div>
+      <div class="a">타일에 놓인 폭탄은 <b>타이머가 끝나면 폭발 효과를 내고 주변 장애물을 제거</b>합니다(<code>UpdateBombs</code>). 기차에 실린 폭탄은 상대 기지에 도착하는 순간 <b>기지를 폭파</b>시켜 승리로 이어집니다.</div></div>
+
+    <div class="qa"><div class="q">무한 모드(F2 · F3)는 무엇인가요?</div>
+      <div class="a">개발·시연용 보조 기능입니다. <b>F2</b>는 레일을 무제한으로 놓게 하고, <b>F3</b>는 모든 자원을 무한으로 하며 기차 과열도 끕니다. 발표에서 특정 장면을 빠르게 보여줄 때 쓸 수 있습니다.</div></div>
   </section>
 
   <!-- 7 -->

@@ -130,11 +130,11 @@ struct Rail {
     std::vector<RailData> rails;
     Bitmap* railImage;
     Bitmap* turnImage;
-    // 소유자(0=중립,1,2) × 방향(RailDir 6종)별로 회전·틴트까지 미리 구워둔 32x32 이미지
-    // → 매 프레임 Save/Restore/Rotate 없이 단순 1장 그리기만 하면 됨
+    // 소유자(0=중립,1,2)와 방향(6종)별로 회전과 색을 미리 입혀둔 32x32 이미지
+    // 그릴 때 회전 처리 없이 바로 그릴 수 있어 빠르다
     Bitmap* variant[3][6];
-    int8_t grid[MAP_HEIGHT][MAP_WIDTH];      // -1=없음, 0이상=RailDir
-    int8_t ownerGrid[MAP_HEIGHT][MAP_WIDTH]; // 0=없음, 1=P1, 2=P2
+    int8_t grid[MAP_HEIGHT][MAP_WIDTH];      // -1은 없음, 0 이상은 RailDir 값
+    int8_t ownerGrid[MAP_HEIGHT][MAP_WIDTH]; // 0은 없음, 1은 P1, 2는 P2
 };
 
 struct Obstacle {
@@ -247,101 +247,116 @@ LPCTSTR lpszWindowName = L"Unrailed";
 ULONG_PTR g_gdiplusToken;
 GameData game;
 
-void BuildCollisionCache(MapData* map);
-void InitMap(MapData* map);
-void ReleaseMap(MapData* map);
-void LoadMapCsv(MapData* map, const std::wstring& csvPath);
-void DrawMap(MapData* map, Graphics* g, Camera cam, int viewW, int viewH);
-BaseArea GetBaseArea(int index);
-RECT GetPlayerRectAt(Player* p, Vec2 pos);
-bool RectsOverlap(RECT a, RECT b);
-bool IsWorldRectVisible(float x, float y, float w, float h, Camera cam, int viewW, int viewH, float padding = 0.0f);
-bool IsPlayerInsideBase(Player* p, BaseArea base);
-bool IsBlockedByBaseWall(Player* p, Vec2 nextPos);
-bool IsBlockedByObstacle(Player* p, Vec2 nextPos);
-bool IsRectInsideAnyBase(RECT rc);
-bool DoesTileOverlapAnyPlayer(int tileX, int tileY);
-RECT GetTrainRect(Train* train);
-RECT GetRailCraftStationRect(BaseArea base);
-RECT GetObstacleCraftStationRect(BaseArea base);
-RECT GetBombCraftStationRect(BaseArea base);
-bool IsPlayerTouchingRailCraftStation(Player* p);
-bool IsPlayerTouchingObstacleCraftStation(Player* p);
-bool IsPlayerTouchingBombCraftStation(Player* p);
-void UpdateRailCraft(Player* p, float deltaTime);
-void UpdateObstacleCraft(Player* p, float deltaTime);
-void UpdateBombCraft(Player* p, float deltaTime);
-void DrawRailCraftStations(Graphics* g, Player* viewer);
-void DrawObstacleCraftStations(Graphics* g, Player* viewer);
-void DrawBombCraftStations(Graphics* g, Player* viewer);
-void DrawBase(Graphics* g, BaseArea base, bool viewerInside);
-void DrawBases(Graphics* g, Player* viewer);
-bool IsSolid(MapData* map, float x, float y);
-void InitPlayer(Player* p, int id, float x, float y);
-int GetPlayerFrameCount(Player* p);
-int GetPlayerDirectionRow(Player* p);
-RECT GetPlayerRect(Player* p);
-void GetPlacementTile(Player* p, int* tileX, int* tileY);
-void UpdatePlayer(Player* p, bool up, bool down, bool left, bool right, MapData* map, float deltaTime);
-void DrawPlayer(Player* p, HDC hdc, Camera cam, int offsetY);
-void DrawInventory(Player* p, HDC hdc, Camera cam, int offsetY);
-void InitRail(Rail* rail);
-void ReleaseRail(Rail* rail);
-bool HasHorizontal(Rail* rail, int tileX, int tileY);
-bool HasVertical(Rail* rail, int tileX, int tileY);
-bool HasRail(Rail* rail, int tileX, int tileY);
-bool HasObstacle(int tileX, int tileY);
-bool HasBomb(int tileX, int tileY);
-bool CanPlaceRailAt(Rail* rail, int tileX, int tileY, RailDir dir, int owner);
-bool CanPlaceObstacleAt(int tileX, int tileY);
-bool CanPlaceBombAt(int tileX, int tileY);
-bool PlaceObstacle(int tileX, int tileY, int owner);
-bool PlaceBomb(int tileX, int tileY, int owner);
-void AddExplosion(float x, float y);
-void AddBaseExplosion(BaseArea base);
-void UpdateBombs(float deltaTime);
-void UpdateExplosions(float deltaTime);
-bool HandleBombTrainCollision();
-void UpdateRailNeighbors(Rail* rail, int tileX, int tileY);
-bool PlaceRail(Rail* rail, int tileX, int tileY, RailDir dir, int owner);
-PlacementType GetNextPlacementType(Player* player, PlacementType placementType);
-bool PlaceSelectedItem(Player* player, PlacementType placementType, RailDir railDir, int owner);
-void DrawOneRailImage(Rail* rail, Graphics* g, float x, float y, RailDir dir, bool preview, int owner);
-void DrawRailPreview(Rail* rail, Graphics* g, int x, int y, RailDir dir, int owner);
-void DrawObstaclePreview(Graphics* g, int x, int y);
-void DrawBombIcon(Graphics* g, float x, float y, float size, BYTE alpha);
-void DrawBombPreview(Graphics* g, int x, int y);
-void DrawPlacementPreview(Graphics* g, Player* player, PlacementType placementType, RailDir railDir, Color tileColor);
-void DrawRails(Rail* rail, Graphics* g, Camera cam, int viewW, int viewH);
-void DrawObstacles(Graphics* g, Camera cam, int viewW, int viewH);
-void DrawBombs(Graphics* g, Camera cam, int viewW, int viewH);
-void DrawExplosions(Graphics* g, Camera cam, int viewW, int viewH);
-void InitTrain(Train* train, float x, float y, int direction, const wchar_t* imagePath);
-void ReleaseTrain(Train* train);
-bool IsTrainOverheated(Train* train);
-void UpdateTrainDirection(Train* train, RailDir rd);
-int CountRailsAhead(Train* train, Rail* rail, int maxCount);
-void UpdateTrain(Train* train, Rail* rail, float deltaTime, float speedMultiplier = 1.0f);
-void DrawHeatBar(Train* train, Graphics* g);
-void DrawTrain(Train* train, Graphics* g, Camera cam, int viewW, int viewH);
-void InitResource(Resource* resource, ResourceType type, float x, float y);
-RECT GetResourceRect(Resource* resource);
-bool ResourceIntersectsPlayer(Resource* resource, Player* player);
-bool HasRailOnResourceSpawn(Resource* resource, Rail* rail);
-void StartResourceRespawn(Resource* resource);
-void HarvestResource(Resource* resource, Player* player, float deltaTime);
-void UpdateResource(Resource* resource, Player* p1, Player* p2, Rail* rail, float deltaTime);
-void DrawResource(Resource* resource, Graphics* g, Camera cam, int viewW, int viewH);
-bool CanPlaceResourceAt(float x, float y);
-bool FindRandomResourcePosition(float* outX, float* outY, int preferredSide = -1);
-void CreateResources();
-void DrawVictoryScreen(Graphics* g);
-void DrawBaseExplosionOverlay(Graphics* g, float elapsed);
-void DrawMenuButton(Graphics* g, const wchar_t* text, int x, int y, int w, int h);
-void DrawPauseMenu(Graphics* g);
-void DrawSettingsMenu(Graphics* g);
-void DrawControlsScreen(Graphics* g);
-void DrawGameStartOverlay(Graphics* g);
+// ===== 맵 / 지형 =====
+void BuildCollisionCache(MapData* map);                 // 충돌·물 정보 생성
+void InitMap(MapData* map);                             // 맵 초기화
+void ReleaseMap(MapData* map);                          // 맵 메모리 해제
+void LoadMapCsv(MapData* map, const std::wstring& csvPath); // CSV 타일 로드
+void DrawMap(MapData* map, Graphics* g, Camera cam, int viewW, int viewH); // 맵 그리기
+BaseArea GetBaseArea(int index);                        // 기지 영역 반환
+
+// ===== 충돌 / 판정 =====
+RECT GetPlayerRectAt(Player* p, Vec2 pos);              // 해당 위치 플레이어 사각형
+bool RectsOverlap(RECT a, RECT b);                      // 두 사각형 겹침 검사
+bool IsWorldRectVisible(float x, float y, float w, float h, Camera cam, int viewW, int viewH, float padding = 0.0f); // 화면 표시 여부
+bool IsPlayerInsideBase(Player* p, BaseArea base);      // 기지 안 여부
+bool IsBlockedByBaseWall(Player* p, Vec2 nextPos);      // 기지 벽 충돌 검사
+bool IsBlockedByObstacle(Player* p, Vec2 nextPos);      // 장애물 충돌 검사
+bool IsRectInsideAnyBase(RECT rc);                      // 기지 내부 포함 검사
+bool DoesTileOverlapAnyPlayer(int tileX, int tileY);    // 타일·플레이어 겹침 검사
+RECT GetTrainRect(Train* train);                        // 기차 사각형
+bool IsSolid(MapData* map, float x, float y);           // 통과 불가 땅 검사
+
+// ===== 제작대 (레일 / 장애물 / 폭탄) =====
+RECT GetRailCraftStationRect(BaseArea base);            // 레일 제작대 위치
+RECT GetObstacleCraftStationRect(BaseArea base);        // 장애물 제작대 위치
+RECT GetBombCraftStationRect(BaseArea base);            // 폭탄 제작대 위치
+bool IsPlayerTouchingRailCraftStation(Player* p);       // 레일 제작대 접촉 검사
+bool IsPlayerTouchingObstacleCraftStation(Player* p);   // 장애물 제작대 접촉 검사
+bool IsPlayerTouchingBombCraftStation(Player* p);       // 폭탄 제작대 접촉 검사
+void UpdateRailCraft(Player* p, float deltaTime);       // 레일 제작 갱신
+void UpdateObstacleCraft(Player* p, float deltaTime);   // 장애물 제작 갱신
+void UpdateBombCraft(Player* p, float deltaTime);       // 폭탄 제작 갱신
+void DrawRailCraftStations(Graphics* g, Player* viewer);     // 레일 제작대 그리기
+void DrawObstacleCraftStations(Graphics* g, Player* viewer); // 장애물 제작대 그리기
+void DrawBombCraftStations(Graphics* g, Player* viewer);     // 폭탄 제작대 그리기
+void DrawBase(Graphics* g, BaseArea base, bool viewerInside); // 기지 하나 그리기
+void DrawBases(Graphics* g, Player* viewer);            // 모든 기지 그리기
+
+// ===== 플레이어 =====
+void InitPlayer(Player* p, int id, float x, float y);   // 플레이어 초기화
+int GetPlayerFrameCount(Player* p);                     // 애니메이션 프레임 수
+int GetPlayerDirectionRow(Player* p);                   // 방향별 스프라이트 줄
+RECT GetPlayerRect(Player* p);                          // 플레이어 충돌 사각형
+void GetPlacementTile(Player* p, int* tileX, int* tileY); // 설치할 타일 좌표
+void UpdatePlayer(Player* p, bool up, bool down, bool left, bool right, MapData* map, float deltaTime); // 플레이어 이동
+void DrawPlayer(Player* p, HDC hdc, Camera cam, int offsetY);   // 플레이어 그리기
+void DrawInventory(Player* p, HDC hdc, Camera cam, int offsetY); // 보유 자원 표시
+
+// ===== 레일 / 장애물 / 폭탄 =====
+void InitRail(Rail* rail);                              // 레일 초기화
+void ReleaseRail(Rail* rail);                           // 레일 메모리 해제
+bool HasHorizontal(Rail* rail, int tileX, int tileY);   // 가로 레일 유무
+bool HasVertical(Rail* rail, int tileX, int tileY);     // 세로 레일 유무
+bool HasRail(Rail* rail, int tileX, int tileY);         // 레일 유무
+bool HasObstacle(int tileX, int tileY);                 // 장애물 유무
+bool HasBomb(int tileX, int tileY);                     // 폭탄 유무
+bool CanPlaceRailAt(Rail* rail, int tileX, int tileY, RailDir dir, int owner); // 레일 설치 가능 검사
+bool CanPlaceObstacleAt(int tileX, int tileY);          // 장애물 설치 가능 검사
+bool CanPlaceBombAt(int tileX, int tileY);              // 폭탄 설치 가능 검사
+bool PlaceObstacle(int tileX, int tileY, int owner);    // 장애물 설치
+bool PlaceBomb(int tileX, int tileY, int owner);        // 폭탄 설치·적재
+void AddExplosion(float x, float y);                    // 폭발 효과 추가
+void AddBaseExplosion(BaseArea base);                   // 기지 폭발 효과 추가
+void UpdateBombs(float deltaTime);                      // 폭탄 갱신
+void UpdateExplosions(float deltaTime);                 // 폭발 효과 갱신
+bool HandleBombTrainCollision();                        // 폭탄·기차 충돌 처리
+void UpdateRailNeighbors(Rail* rail, int tileX, int tileY); // 주변 레일 모양 재계산
+bool PlaceRail(Rail* rail, int tileX, int tileY, RailDir dir, int owner); // 레일 설치
+PlacementType GetNextPlacementType(Player* player, PlacementType placementType); // 설치물 종류 변경
+bool PlaceSelectedItem(Player* player, PlacementType placementType, RailDir railDir, int owner); // 선택 설치물 설치
+void DrawOneRailImage(Rail* rail, Graphics* g, float x, float y, RailDir dir, bool preview, int owner); // 레일 한 칸 그리기
+void DrawRailPreview(Rail* rail, Graphics* g, int x, int y, RailDir dir, int owner); // 레일 미리보기
+void DrawObstaclePreview(Graphics* g, int x, int y);    // 장애물 미리보기
+void DrawBombIcon(Graphics* g, float x, float y, float size, BYTE alpha); // 폭탄 아이콘
+void DrawBombPreview(Graphics* g, int x, int y);        // 폭탄 미리보기
+void DrawPlacementPreview(Graphics* g, Player* player, PlacementType placementType, RailDir railDir, Color tileColor); // 설치 위치 미리보기
+void DrawRails(Rail* rail, Graphics* g, Camera cam, int viewW, int viewH); // 레일 전체 그리기
+void DrawObstacles(Graphics* g, Camera cam, int viewW, int viewH);   // 장애물 전체 그리기
+void DrawBombs(Graphics* g, Camera cam, int viewW, int viewH);       // 폭탄 전체 그리기
+void DrawExplosions(Graphics* g, Camera cam, int viewW, int viewH);  // 폭발 효과 전체 그리기
+
+// ===== 기차 =====
+void InitTrain(Train* train, float x, float y, int direction, const wchar_t* imagePath); // 기차 초기화
+void ReleaseTrain(Train* train);                        // 기차 메모리 해제
+bool IsTrainOverheated(Train* train);                   // 과열 상태 검사
+void UpdateTrainDirection(Train* train, RailDir rd);    // 진행 방향 변경
+int CountRailsAhead(Train* train, Rail* rail, int maxCount); // 앞에 남은 레일 수
+void UpdateTrain(Train* train, Rail* rail, float deltaTime, float speedMultiplier = 1.0f); // 기차 주행·상태 갱신
+void DrawHeatBar(Train* train, Graphics* g);            // 과열 게이지 그리기
+void DrawTrain(Train* train, Graphics* g, Camera cam, int viewW, int viewH); // 기차 그리기
+
+// ===== 자원 =====
+void InitResource(Resource* resource, ResourceType type, float x, float y); // 자원 초기화
+RECT GetResourceRect(Resource* resource);               // 자원 사각형
+bool ResourceIntersectsPlayer(Resource* resource, Player* player); // 자원·플레이어 접촉 검사
+bool HasRailOnResourceSpawn(Resource* resource, Rail* rail); // 자원 자리 레일 유무
+void StartResourceRespawn(Resource* resource);          // 자원 재생성 시작
+void HarvestResource(Resource* resource, Player* player, float deltaTime); // 자원 채집
+void UpdateResource(Resource* resource, Player* p1, Player* p2, Rail* rail, float deltaTime); // 자원 갱신
+void DrawResource(Resource* resource, Graphics* g, Camera cam, int viewW, int viewH); // 자원 그리기
+bool CanPlaceResourceAt(float x, float y);              // 자원 배치 가능 검사
+bool FindRandomResourcePosition(float* outX, float* outY, int preferredSide = -1); // 무작위 자원 위치
+void CreateResources();                                 // 자원 생성
+
+// ===== UI / 화면 =====
+void DrawVictoryScreen(Graphics* g);                    // 승리 화면
+void DrawBaseExplosionOverlay(Graphics* g, float elapsed); // 기지 폭발 연출
+void DrawMenuButton(Graphics* g, const wchar_t* text, int x, int y, int w, int h); // 메뉴 버튼
+void DrawPauseMenu(Graphics* g);                        // 일시정지 메뉴
+void DrawSettingsMenu(Graphics* g);                     // 설정 메뉴
+void DrawControlsScreen(Graphics* g);                   // 조작법 화면
+void DrawGameStartOverlay(Graphics* g);                 // 게임 시작 연출
 bool IsWater(MapData* map, float x, float y) {
     if (x < 0 || y < 0 || x >= map->pixelW || y >= map->pixelH) return false;
     if (map->waterBits.empty()) return false;
@@ -385,7 +400,7 @@ void PresentBackBuffer(HWND hWnd, HDC hDC) {
     }
 }
 
-// 클라이언트 마우스 좌표 → 1280x720 논리 좌표로 변환
+// 실제 창의 마우스 좌표를 1280x720 게임 좌표로 환산한다
 void MapMouseToLogical(int* mx, int* my) {
     if (g_presentW > 0) *mx = (*mx - g_presentX) * SCREEN_WIDTH / g_presentW;
     if (g_presentH > 0) *my = (*my - g_presentY) * SCREEN_HEIGHT / g_presentH;
@@ -814,7 +829,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
 
         // top screen
         Graphics g1(game.memDC);
-        // 빠른 렌더링 모드 (기본 고품질 보간 대신 최저 비용) — 끊김 완화
+        // 화질보다 속도를 우선하는 렌더링 옵션이다. 끊김을 줄이기 위해 사용한다
         g1.SetInterpolationMode(InterpolationModeNearestNeighbor);
         g1.SetPixelOffsetMode(PixelOffsetModeHalf);
         g1.SetSmoothingMode(SmoothingModeNone);
@@ -963,7 +978,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
     {
         int mx = LOWORD(lParam);
         int my = HIWORD(lParam);
-        MapMouseToLogical(&mx, &my); // 화면 좌표 → 논리 좌표
+        MapMouseToLogical(&mx, &my); // 창 좌표를 게임 좌표로 변환
 
         if (game.gameState == STATE_START) {
             // 게임시작 버튼
@@ -1024,8 +1039,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
             }
         }
         else if (game.gameState == STATE_SETTINGS) {
-            // bx=440, by=230
-            // volume slider track: sx=520, sy=305, sw=290, sh=10
+            // 볼륨 슬라이더 막대 위치와 길이
             const int sx = 520, sy = 305, sw = 290;
             if (mx >= sx && mx <= sx + sw && my >= sy - 10 && my <= sy + 20) {
                 game.volDragging = true;
@@ -1050,7 +1064,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
     {
         int mmx = (int)(SHORT)LOWORD(lParam);
         int mmy = (int)(SHORT)HIWORD(lParam);
-        MapMouseToLogical(&mmx, &mmy); // 화면 좌표 → 논리 좌표
+        MapMouseToLogical(&mmx, &mmy); // 창 좌표를 게임 좌표로 변환
         g_mousePos = { (LONG)mmx, (LONG)mmy };
         if (game.volDragging) {
             // 슬라이더 트랙 위치: 시작화면 sx=1020 sw=200 / 설정화면 sx=520 sw=290
@@ -1843,7 +1857,7 @@ bool HasRail(Rail* rail, int tileX, int tileY) {
     return rail->grid[tileY][tileX] >= 0;
 }
 
-// 특정 소유자(owner)의 레일만 인식하는 버전 — 플레이어/기차별 레일 분리에 사용
+// 해당 소유자의 레일만 있는지 확인한다. 플레이어별로 레일을 구분할 때 쓴다
 bool HasRailOwner(Rail* rail, int tileX, int tileY, int owner) {
     if (tileX < 0 || tileY < 0 || tileX >= MAP_WIDTH || tileY >= MAP_HEIGHT) return false;
     return rail->grid[tileY][tileX] >= 0 && rail->ownerGrid[tileY][tileX] == (int8_t)owner;
@@ -2048,12 +2062,12 @@ RailDir AutoDetectRailDir(Rail* rail, int tileX, int tileY, RailDir baseDir, int
     bool horiz = left || right;
     bool vert = up || down;
 
-    // 이미 양옆(또는 위아래)이 모두 연결된 '관통' 레일은 직선 유지 — 턴으로 바꾸지 않음
-    // (직선 위에 수직 레일을 놔도 선이 꺾여 망가지지 않도록)
+    // 양옆이나 위아래가 모두 이어진 레일은 직선을 그대로 유지한다
+    // 이렇게 해야 이어진 선 위에 수직 레일을 놓아도 선이 꺾여 망가지지 않는다
     if (left && right) return RAIL_HORIZONTAL;
     if (up && down)    return RAIL_VERTICAL;
 
-    // 가로 한쪽 + 세로 한쪽이면 코너(턴) — 연결되는 두 방향으로 정확히 판별
+    // 가로와 세로가 한쪽씩 이어지면 그 두 방향을 잇는 곡선으로 만든다
     if (horiz && vert) {
         if (right && down) return RAIL_TURN_RD;
         if (left && down)  return RAIL_TURN_LD;
@@ -2856,9 +2870,7 @@ void DrawBaseExplosionOverlay(Graphics* g, float elapsed) {
     g->FillRectangle(&dim, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
 }
 
-// ─────────────────────────────────────────────────────────────
-//  Menu helpers
-// ─────────────────────────────────────────────────────────────
+// 메뉴 관련 그리기 함수들
 void DrawMenuButton(Graphics* g, const wchar_t* text, int x, int y, int w, int h) {
     SolidBrush btnBg(Color(220, 60, 60, 60));
     Pen borderPen(Color(255, 200, 200, 200), 1.5f);
@@ -2874,10 +2886,8 @@ void DrawMenuButton(Graphics* g, const wchar_t* text, int x, int y, int w, int h
     g->DrawString(text, -1, &btnFont, rect, &sf, &txtBrush);
 }
 
-// Pause menu layout  (bx=470, by=190, bw=340, bh=300)
-//   계속하기  → bx+20, by+65,  w=300, h=50
-//   설정      → bx+20, by+130, w=300, h=50
-//   게임 종료 → bx+20, by+195, w=300, h=50
+// 일시정지 메뉴 박스 위치는 (470, 190), 크기는 340 x 300 이다
+// 버튼은 위에서부터 계속하기, 설정, 게임 종료 순서로 배치한다
 void DrawPauseMenu(Graphics* g) {
     SolidBrush dim(Color(160, 0, 0, 0));
     g->FillRectangle(&dim, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
@@ -2901,9 +2911,8 @@ void DrawPauseMenu(Graphics* g) {
     DrawMenuButton(g, L"게임 종료", bx + 20, by + 195, 300, 50);
 }
 
-// Settings layout  (bx=440, by=230, bw=400, bh=260)
-//   volume slider track: sx=bx+80=520, sy=by+75=305, sw=290, sh=10
-//   뒤로 button:         bx+20, by+160, bw-40=360, h=50
+// 설정 메뉴 박스 위치는 (440, 230), 크기는 400 x 260 이다
+// 안에는 볼륨 슬라이더와 뒤로 버튼이 들어간다
 void DrawSettingsMenu(Graphics* g) {
     SolidBrush dim(Color(160, 0, 0, 0));
     g->FillRectangle(&dim, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
